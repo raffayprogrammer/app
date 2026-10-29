@@ -1,8 +1,8 @@
 "use client";
 
-import { Pencil, Plug, PlugZap, Plus, Printer, RotateCcw, Trash2 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { Pencil, Plug, PlugZap, Plus, Printer, Trash2 } from "lucide-react";
 import { useState, useSyncExternalStore } from "react";
+import { createStaffAccount } from "@/app/actions/team";
 import { attempt, toast } from "@/components/toast";
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, PageHeader, Select, Tabs, tableCls, tdCls, thCls } from "@/components/ui";
 import { lineAmount } from "@/lib/calc";
@@ -31,7 +31,6 @@ export default function SettingsPage() {
     owner && { id: "canned", label: "Canned jobs" },
     { id: "printer", label: "Printer" },
     can(user.role, "audit") && { id: "activity", label: "Activity log" },
-    owner && { id: "demo", label: "Demo data" },
   ];
   const tabs = all.filter((t): t is { id: Tab; label: string } => !!t);
   const [tab, setTab] = useState<Tab>(tabs[0].id);
@@ -45,7 +44,6 @@ export default function SettingsPage() {
       {tab === "canned" && <CannedTab />}
       {tab === "printer" && <PrinterTab />}
       {tab === "activity" && <ActivityTab />}
-      {tab === "demo" && <DemoTab />}
     </>
   );
 }
@@ -154,11 +152,25 @@ function TeamTab() {
 }
 
 function AddUserModal({ onClose }: { onClose: () => void }) {
-  const addUser = useStore((s) => s.addUser);
+  const refresh = useStore((s) => s.refresh);
+  const [busy, setBusy] = useState(false);
   const [f, setF] = useState<{ name: string; email: string; password: string; role: User["role"] }>({ name: "", email: "", password: "", role: "advisor" });
   return (
-    <Modal open onClose={onClose} title="Add user" footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button type="submit" form="user-form">Add user</Button></>}>
-      <form id="user-form" onSubmit={(e) => { e.preventDefault(); if (attempt(() => addUser(f), "User added")) onClose(); }} className="space-y-3">
+    <Modal open onClose={onClose} title="Add user" footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button type="submit" form="user-form" disabled={busy}>{busy ? "Adding…" : "Add user"}</Button></>}>
+      <form
+        id="user-form"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          const { error } = await createStaffAccount(f);
+          setBusy(false);
+          if (error) return toast(error, "error");
+          toast(`${f.name} can now sign in`);
+          await attempt(refresh);
+          onClose();
+        }}
+        className="space-y-3"
+      >
         <Field label="Name"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required autoFocus /></Field>
         <Field label="Email (used to sign in)"><Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} required /></Field>
         <Field label="Temporary password" hint="At least 6 characters"><Input value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} required /></Field>
@@ -224,12 +236,12 @@ function CannedModal({ job, onClose }: { job?: CannedJob; onClose: () => void })
   );
   const patch = (i: number, p: Partial<DraftLine>) => setLines(lines.map((l, j) => (j === i ? { ...l, ...p } : l)));
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (lines.some((l) => !(Number(l.qty) > 0))) return toast("Every line needs a quantity above zero", "error");
     if (lines.some((l) => l.kind === "part" && !l.partId)) return toast("Choose a part for every part line", "error");
     const out = lines.map((l) => ({ kind: l.kind, description: l.description.trim() || LINE_KIND[l.kind], partId: l.partId, qty: Number(l.qty), unitPrice: toPaisa(l.price || 0) }));
-    if (attempt(() => save({ title, lines: out }, job?.id), "Canned job saved")) onClose();
+    if (await attempt(() => save({ title, lines: out }, job?.id), "Canned job saved")) onClose();
   };
 
   return (
@@ -375,28 +387,6 @@ function ActivityTab() {
           </tbody>
         </table>
       </div>
-    </Card>
-  );
-}
-
-function DemoTab() {
-  const router = useRouter();
-  const resetDemo = useStore((s) => s.resetDemo);
-  const [confirm, setConfirm] = useState(false);
-  return (
-    <Card title="Demo data" className="max-w-2xl">
-      <p className="text-sm text-slate-600">
-        This version saves data in this browser only, so it can be demoed with no server. Resetting wipes every workshop in this browser and reloads the sample workshop.
-      </p>
-      <Button variant="danger" className="mt-4" onClick={() => setConfirm(true)}><RotateCcw className="h-4 w-4" /> Reset demo data</Button>
-      <Modal
-        open={confirm}
-        onClose={() => setConfirm(false)}
-        title="Reset all data?"
-        footer={<><Button variant="secondary" onClick={() => setConfirm(false)}>Cancel</Button><Button variant="danger" onClick={() => { resetDemo(); router.replace("/login"); }}>Reset</Button></>}
-      >
-        <p className="text-sm text-slate-600">All job cards, invoices, customers and settings in this browser will be replaced with the sample data.</p>
-      </Modal>
     </Card>
   );
 }

@@ -35,6 +35,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { user, workshop } = useSession();
   const logout = useStore((s) => s.logout);
+  const refresh = useStore((s) => s.refresh);
   const [menuPath, setMenuPath] = useState<string | null>(null);
   const menuOpen = menuPath === pathname;
   const setMenuOpen = (open: boolean) => setMenuPath(open ? pathname : null);
@@ -42,6 +43,17 @@ export function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!user || !user.active) router.replace("/login");
   }, [router, user]);
+
+  // Pick up changes made by other staff: every 30s, and whenever the tab comes back into view.
+  useEffect(() => {
+    const tick = () => document.visibilityState === "visible" && refresh().catch(() => {});
+    const timer = setInterval(tick, 30_000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [refresh]);
 
   if (!user || !workshop) return null;
 
@@ -80,8 +92,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           <p className="text-xs text-slate-400">{ROLE_LABELS[user.role]}</p>
         </div>
         <button
-          onClick={() => {
-            logout();
+          onClick={async () => {
+            await logout();
             router.replace("/login");
           }}
           className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm text-slate-400 hover:bg-white/5 hover:text-white"

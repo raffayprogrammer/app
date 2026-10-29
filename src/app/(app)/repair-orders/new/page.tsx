@@ -34,6 +34,7 @@ function NewRepairOrder() {
   const [promisedAt, setPromisedAt] = useState("");
   const [technicianId, setTechnicianId] = useState("");
   const [modal, setModal] = useState<"customer" | "vehicle" | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const customer = customers.find((c) => c.id === customerId);
   const custVehicles = vehicles.filter((v) => v.customerId === customerId);
@@ -59,9 +60,11 @@ function NewRepairOrder() {
 
   const openRo = vehicle ? ros.find((r) => r.vehicleId === vehicle.id && ["estimate", "in_progress", "completed"].includes(r.status)) : undefined;
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const id = attemptResult(
+    if (busy) return;
+    setBusy(true);
+    const id = await attemptResult(
       () => createRo({
         customerId, vehicleId, concern, technicianId: technicianId || null,
         odometerIn: odometer ? Number(odometer) : vehicle?.odometer ?? null,
@@ -69,6 +72,7 @@ function NewRepairOrder() {
       }),
       "Job card opened",
     );
+    setBusy(false);
     if (id) router.push(`/repair-orders/${id}`);
   };
 
@@ -167,7 +171,7 @@ function NewRepairOrder() {
                 {technicians.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </Select>
             </Field>
-            <Button type="submit" className="w-full" disabled={!customerId || !vehicleId || !!openRo}>Open job card</Button>
+            <Button type="submit" className="w-full" disabled={!customerId || !vehicleId || !!openRo || busy}>{busy ? "Opening…" : "Open job card"}</Button>
           </div>
         </Card>
       </form>

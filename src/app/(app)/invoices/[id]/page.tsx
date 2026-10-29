@@ -135,7 +135,7 @@ export default function InvoicePage() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setVoiding(false)}>Keep invoice</Button>
-            <Button variant="danger" onClick={() => attempt(() => voidInvoice(inv.id, reason), "Invoice voided") && setVoiding(false)}>Void invoice</Button>
+            <Button variant="danger" onClick={async () => { if (await attempt(() => voidInvoice(inv.id, reason), "Invoice voided")) setVoiding(false); }}>Void invoice</Button>
           </>
         }
       >
@@ -156,13 +156,18 @@ function PaymentForm({ invoiceId, balance, onPaid }: { invoiceId: string; balanc
   const [amount, setAmount] = useState(String(toRupees(balance)));
   const [tendered, setTendered] = useState("");
   const [reference, setReference] = useState("");
+  // Blocks a double click from recording the same payment twice.
+  const [busy, setBusy] = useState(false);
   const amt = toPaisa(amount || 0);
   const change = method === "cash" && tendered ? toPaisa(tendered) - amt : 0;
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (busy) return;
     if (method === "cash" && tendered && toPaisa(tendered) < amt) return toast("Cash received is less than the amount.", "error");
-    const ok = attempt(() => addPayment(invoiceId, { method, amount: amt, reference }), amt === balance ? "Paid in full" : "Part payment recorded");
+    setBusy(true);
+    const ok = await attempt(() => addPayment(invoiceId, { method, amount: amt, reference }), amt === balance ? "Paid in full" : "Part payment recorded");
+    setBusy(false);
     if (ok) {
       setTendered("");
       setReference("");
@@ -202,7 +207,7 @@ function PaymentForm({ invoiceId, balance, onPaid }: { invoiceId: string; balanc
             <Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Transaction ID / last 4 digits" />
           </Field>
         )}
-        <Button type="submit" variant="success" className="w-full">Receive {formatMoney(amt)}</Button>
+        <Button type="submit" variant="success" className="w-full" disabled={busy}>{busy ? "Saving…" : `Receive ${formatMoney(amt)}`}</Button>
       </form>
     </Card>
   );

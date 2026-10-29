@@ -25,10 +25,10 @@ export function CustomerModal({ open, onClose, customer, onSaved }: {
   const set = (k: keyof typeof c) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => setC({ ...c, [k]: e.target.value });
   const setVeh = (k: keyof typeof v) => (e: React.ChangeEvent<HTMLInputElement>) => setV({ ...v, [k]: e.target.value });
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const addingVehicle = !customer && v.plate.trim() !== "";
-    const result = attemptResult(() => {
+    const result = await attemptResult(async () => {
       const input = { kind: c.kind, name: c.name, phone: c.phone, email: c.email, address: c.address, ntn: c.ntn, notes: c.notes };
       // Check the vehicle first so a bad plate doesn't leave a customer half-created.
       if (addingVehicle) {
@@ -37,10 +37,10 @@ export function CustomerModal({ open, onClose, customer, onSaved }: {
         const taken = s.vehicles.some((x) => x.workshopId === s.session?.workshopId && plateKey(x.plate) === plateKey(v.plate));
         if (taken) throw new ActionError(`Plate ${normalizePlate(v.plate)} is already registered.`);
       }
-      const customerId = saveCustomer(input, customer?.id);
+      const customerId = await saveCustomer(input, customer?.id);
       let vehicleId: string | undefined;
       if (addingVehicle) {
-        vehicleId = saveVehicle({
+        vehicleId = await saveVehicle({
           customerId, plate: v.plate, make: v.make, model: v.model, year: v.year, vin: v.vin, color: v.color,
           odometer: v.odometer ? Number(v.odometer) : null,
         });
@@ -126,9 +126,9 @@ export function VehicleModal({ open, onClose, customerId, vehicle, onSaved }: {
   );
   const set = (k: keyof typeof v) => (e: React.ChangeEvent<HTMLInputElement>) => setV({ ...v, [k]: e.target.value });
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const id = attemptResult(
+    const id = await attemptResult(
       () => saveVehicle({ customerId, plate: v.plate, make: v.make, model: v.model, year: v.year, vin: v.vin, color: v.color, odometer: v.odometer ? Number(v.odometer) : null }, vehicle?.id),
       vehicle ? "Vehicle updated" : "Vehicle added",
     );
@@ -177,9 +177,9 @@ export function PartModal({ open, onClose, part, onSaved }: { open: boolean; onC
   const price = Number(f.price || 0);
   const margin = price > 0 ? Math.round(((price - cost) / price) * 100) : 0;
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const id = attemptResult(
+    const id = await attemptResult(
       () => savePart({
         partNumber: f.partNumber, name: f.name, brand: f.brand, category: f.category, location: f.location,
         cost: toPaisa(f.cost || 0), price: toPaisa(f.price || 0), minQty: Math.max(0, Math.floor(Number(f.minQty || 0))),

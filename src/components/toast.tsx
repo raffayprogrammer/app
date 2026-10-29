@@ -24,9 +24,9 @@ export function toast(message: string, kind: ToastItem["kind"] = "success") {
  * Run a store action that returns a value (e.g. a new record id). A broken
  * business rule shows as an error toast and returns undefined instead of crashing.
  */
-export function attemptResult<T>(fn: () => T, success?: string): T | undefined {
+export async function attemptResult<T>(fn: () => T | Promise<T>, success?: string): Promise<T | undefined> {
   try {
-    const result = fn();
+    const result = await fn();
     if (success) toast(success);
     return result;
   } catch (e) {
@@ -34,15 +34,17 @@ export function attemptResult<T>(fn: () => T, success?: string): T | undefined {
       toast(e.message, "error");
       return undefined;
     }
-    throw e;
+    toast("Something went wrong. Please try again.", "error");
+    console.error(e);
+    return undefined;
   }
 }
 
-/** Run a store action; true if it succeeded, false if a business rule stopped it. */
-export function attempt(fn: () => unknown, success?: string): boolean {
+/** Run a store action; resolves true if it succeeded, false if a business rule stopped it. */
+export async function attempt(fn: () => unknown, success?: string): Promise<boolean> {
   let ok = false;
-  attemptResult(() => {
-    fn();
+  await attemptResult(async () => {
+    await fn();
     ok = true;
   }, success);
   return ok;

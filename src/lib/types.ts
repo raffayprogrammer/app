@@ -39,8 +39,6 @@ export interface User {
   workshopId: string;
   name: string;
   email: string;
-  /** Demo mode only. Real auth moves to Supabase Auth. */
-  password: string;
   role: Role;
   active: boolean;
   createdAt: string;

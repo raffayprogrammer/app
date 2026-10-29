@@ -260,7 +260,154 @@ language sql stable security definer set search_path = public as $$
 $$;
 
 -- ---------------------------------------------------------------------------
+-- Guards: rules the database enforces even if someone bypasses the app.
+-- They only apply to signed-in users writing directly (role "authenticated");
+-- the functions below run as the table owner and are allowed through.
+-- ---------------------------------------------------------------------------
+
+-- Columns that may only change through the workflow functions.
+create or replace function guard_direct_updates() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if current_user <> 'authenticated' then
+    return new;
+  end if;
+  if (to_jsonb(new) ->> 'workshop_id') is distinct from (to_jsonb(old) ->> 'workshop_id') then
+    raise exception 'Records cannot be moved to another workshop';
+  end if;
+  if tg_table_name = 'repair_orders' then
+    if new.status is distinct from old.status or new.invoice_id is distinct from old.invoice_id
+       or new.stock_deducted is distinct from old.stock_deducted or new.number is distinct from old.number
+       or new.completed_at is distinct from old.completed_at or new.customer_id is distinct from old.customer_id
+       or new.vehicle_id is distinct from old.vehicle_id or new.label is distinct from old.label then
+      raise exception 'Use the job card buttons to change this';
+    end if;
+    if new.discount is distinct from old.discount and old.status not in ('estimate', 'in_progress') then
+      raise exception 'Discount can only change before work is completed';
+    end if;
+  elsif tg_table_name = 'parts' then
+    if new.qty_on_hand is distinct from old.qty_on_hand then
+      raise exception 'Change stock with a stock adjustment';
+    end if;
+  elsif tg_table_name = 'workshops' then
+    if new.next_invoice_seq is distinct from old.next_invoice_seq or new.next_ro_seq is distinct from old.next_ro_seq then
+      raise exception 'Document numbers cannot be changed';
+    end if;
+  elsif tg_table_name = 'profiles' then
+    if new.email is distinct from old.email then
+      raise exception 'Email cannot be changed here';
+    end if;
+    if old.role = 'owner' and old.active and (new.role <> 'owner' or not new.active) and not exists (
+      select 1 from profiles where workshop_id = old.workshop_id and role = 'owner' and active and id <> old.id
+    ) then
+      raise exception 'A workshop must keep at least one active owner';
+    end if;
+  end if;
+  return new;
+end $$;
+
+create trigger guard_repair_orders before update on repair_orders for each row execute function guard_direct_updates();
+create trigger guard_parts before update on parts for each row execute function guard_direct_updates();
+create trigger guard_workshops before update on workshops for each row execute function guard_direct_updates();
+create trigger guard_profiles before update on profiles for each row execute function guard_direct_updates();
+create trigger guard_customers before update on customers for each row execute function guard_direct_updates();
+create trigger guard_vehicles before update on vehicles for each row execute function guard_direct_updates();
+create trigger guard_canned_jobs before update on canned_jobs for each row execute function guard_direct_updates();
+
+-- Jobs and lines can only be edited while the job card is an estimate or in progress.
+-- Approval and "done" only change through set_job_approval / set_job_done.
+create or replace function guard_job_edits() returns trigger
+language plpgsql set search_path = public as $$
+declare
+  v_ro uuid;
+  v_status ro_status;
+begin
+  if current_user <> 'authenticated' then
+    return case when tg_op = 'DELETE' then old else new end;
+  end if;
+
+  if tg_table_name = 'jobs' then
+    if tg_op = 'DELETE' then
+      v_ro := old.repair_order_id;
+    else
+      v_ro := new.repair_order_id;
+      if tg_op = 'INSERT' and (new.approval <> 'pending' or new.done) then
+        raise exception 'New jobs start as pending';
+      end if;
+      if tg_op = 'UPDATE' and (new.approval is distinct from old.approval or new.done is distinct from old.done
+                               or new.repair_order_id is distinct from old.repair_order_id) then
+        raise exception 'Use the approval buttons to change this';
+      end if;
+    end if;
+  else
+    if tg_op = 'DELETE' then
+      select j.repair_order_id into v_ro from jobs j where j.id = old.job_id;
+      if v_ro is null then
+        return old; -- the whole job is being deleted
+      end if;
+    else
+      select j.repair_order_id into v_ro from jobs j where j.id = new.job_id;
+      if v_ro is null then
+        raise exception 'Job not found';
+      end if;
+      if tg_op = 'UPDATE' and new.job_id is distinct from old.job_id then
+        raise exception 'Lines cannot be moved between jobs';
+      end if;
+      if new.part_id is not null and not exists (select 1 from parts p where p.id = new.part_id) then
+        raise exception 'Part not found';
+      end if;
+    end if;
+  end if;
+
+  select status into v_status from repair_orders where id = v_ro;
+  if v_status is null then
+    raise exception 'Job card not found';
+  end if;
+  if v_status not in ('estimate', 'in_progress') then
+    raise exception 'This job card is closed for editing. Reopen it first.';
+  end if;
+  return case when tg_op = 'DELETE' then old else new end;
+end $$;
+
+create trigger guard_jobs before insert or update or delete on jobs for each row execute function guard_job_edits();
+create trigger guard_job_lines before insert or update or delete on job_lines for each row execute function guard_job_edits();
+
+-- Activity log for records edited directly from the app (workflow functions log their own entries).
+create or replace function log_change() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  v_row jsonb := to_jsonb(case when tg_op = 'DELETE' then old else new end);
+  v_label text := coalesce(v_row ->> 'name', v_row ->> 'title', v_row ->> 'plate', '');
+begin
+  if coalesce(auth.role(), '') <> 'authenticated' then
+    return null;
+  end if;
+  -- Stock and odometer changes are logged by the functions that make them.
+  if tg_op = 'UPDATE' and (to_jsonb(new) - 'qty_on_hand' - 'odometer') = (to_jsonb(old) - 'qty_on_hand' - 'odometer') then
+    return null;
+  end if;
+  insert into audit_log (workshop_id, user_id, action, entity, entity_id, summary)
+  values (
+    coalesce((v_row ->> 'workshop_id')::uuid, (v_row ->> 'id')::uuid),
+    auth.uid(),
+    tg_table_name || '.' || lower(tg_op),
+    tg_table_name,
+    (v_row ->> 'id')::uuid,
+    initcap(lower(tg_op)) || 'd ' || v_label
+  );
+  return null;
+end $$;
+
+create trigger log_customers after insert or update on customers for each row execute function log_change();
+create trigger log_vehicles after insert or update on vehicles for each row execute function log_change();
+create trigger log_parts after insert or update on parts for each row execute function log_change();
+create trigger log_canned_jobs after insert or update or delete on canned_jobs for each row execute function log_change();
+create trigger log_workshops after update on workshops for each row execute function log_change();
+create trigger log_profiles after update on profiles for each row execute function log_change();
+
+-- ---------------------------------------------------------------------------
 -- Row-level security
+-- (select fn()) lets Postgres evaluate the helper once per query, not per row.
 -- ---------------------------------------------------------------------------
 alter table workshops       enable row level security;
 alter table profiles        enable row level security;
@@ -277,100 +424,200 @@ alter table payments        enable row level security;
 alter table stock_movements enable row level security;
 alter table audit_log       enable row level security;
 
-create policy "members read own workshop" on workshops for select using (id = current_workshop_id());
-create policy "owner updates workshop" on workshops for update using (id = current_workshop_id() and has_role('owner'));
+create policy "members read own workshop" on workshops for select using (id = (select current_workshop_id()));
+create policy "owner updates workshop" on workshops for update
+  using (id = (select current_workshop_id()) and (select has_role('owner')));
 
-create policy "members read team" on profiles for select using (workshop_id = current_workshop_id());
-create policy "owner manages team" on profiles for update using (workshop_id = current_workshop_id() and has_role('owner'));
+create policy "members read team" on profiles for select using (workshop_id = (select current_workshop_id()));
+create policy "owner manages team" on profiles for update
+  using (workshop_id = (select current_workshop_id()) and (select has_role('owner')));
 
--- Front desk data: everyone in the workshop can read; front-desk roles can write.
-create policy "read customers" on customers for select using (workshop_id = current_workshop_id());
-create policy "write customers" on customers for insert with check (workshop_id = current_workshop_id() and has_role('owner', 'advisor', 'cashier'));
-create policy "edit customers" on customers for update using (workshop_id = current_workshop_id() and has_role('owner', 'advisor', 'cashier'));
+create policy "read customers" on customers for select using (workshop_id = (select current_workshop_id()));
+create policy "add customers" on customers for insert
+  with check (workshop_id = (select current_workshop_id()) and (select has_role('owner', 'advisor', 'cashier')));
+create policy "edit customers" on customers for update
+  using (workshop_id = (select current_workshop_id()) and (select has_role('owner', 'advisor', 'cashier')));
 
-create policy "read vehicles" on vehicles for select using (workshop_id = current_workshop_id());
-create policy "write vehicles" on vehicles for insert with check (workshop_id = current_workshop_id() and has_role('owner', 'advisor', 'cashier'));
-create policy "edit vehicles" on vehicles for update using (workshop_id = current_workshop_id() and has_role('owner', 'advisor', 'cashier'));
+create policy "read vehicles" on vehicles for select using (workshop_id = (select current_workshop_id()));
+create policy "add vehicles" on vehicles for insert
+  with check (workshop_id = (select current_workshop_id()) and (select has_role('owner', 'advisor', 'cashier'))
+              and exists (select 1 from customers c where c.id = customer_id));
+create policy "edit vehicles" on vehicles for update
+  using (workshop_id = (select current_workshop_id()) and (select has_role('owner', 'advisor', 'cashier')));
 
--- Stock quantity only changes through functions (adjust_stock, complete/reopen).
-create policy "read parts" on parts for select using (workshop_id = current_workshop_id());
-create policy "write parts" on parts for insert with check (workshop_id = current_workshop_id() and has_role('owner', 'cashier') and qty_on_hand = 0);
-create policy "edit parts" on parts for update using (workshop_id = current_workshop_id() and has_role('owner', 'cashier'));
+create policy "read parts" on parts for select using (workshop_id = (select current_workshop_id()));
+create policy "add parts" on parts for insert
+  with check (workshop_id = (select current_workshop_id()) and (select has_role('owner', 'cashier')) and qty_on_hand = 0);
+create policy "edit parts" on parts for update
+  using (workshop_id = (select current_workshop_id()) and (select has_role('owner', 'cashier')));
 
-create policy "read canned jobs" on canned_jobs for select using (workshop_id = current_workshop_id());
-create policy "owner writes canned jobs" on canned_jobs for all using (workshop_id = current_workshop_id() and has_role('owner'))
-  with check (workshop_id = current_workshop_id() and has_role('owner'));
+create policy "read canned jobs" on canned_jobs for select using (workshop_id = (select current_workshop_id()));
+create policy "owner writes canned jobs" on canned_jobs for all
+  using (workshop_id = (select current_workshop_id()) and (select has_role('owner')))
+  with check (workshop_id = (select current_workshop_id()) and (select has_role('owner')));
 
--- Job cards: technicians read the cards assigned to them; the rest of the team reads all.
+-- Technicians only see the job cards assigned to them.
 create policy "read repair orders" on repair_orders for select using (
-  workshop_id = current_workshop_id() and (not has_role('technician') or technician_id = auth.uid())
+  workshop_id = (select current_workshop_id())
+  and (not (select has_role('technician')) or technician_id = (select auth.uid()))
 );
-create policy "edit repair orders" on repair_orders for update using (workshop_id = current_workshop_id() and has_role('owner', 'advisor'));
+create policy "edit repair orders" on repair_orders for update
+  using (workshop_id = (select current_workshop_id()) and (select has_role('owner', 'advisor')));
 
 create policy "read jobs" on jobs for select using (
-  workshop_id = current_workshop_id() and exists (select 1 from repair_orders r where r.id = repair_order_id)
+  workshop_id = (select current_workshop_id()) and exists (select 1 from repair_orders r where r.id = repair_order_id)
 );
-create policy "write jobs" on jobs for all using (workshop_id = current_workshop_id() and has_role('owner', 'advisor'))
-  with check (workshop_id = current_workshop_id() and has_role('owner', 'advisor'));
+create policy "write jobs" on jobs for all
+  using (workshop_id = (select current_workshop_id()) and (select has_role('owner', 'advisor')))
+  with check (workshop_id = (select current_workshop_id()) and (select has_role('owner', 'advisor'))
+              and exists (select 1 from repair_orders r where r.id = repair_order_id));
 
 create policy "read job lines" on job_lines for select using (
-  workshop_id = current_workshop_id() and exists (select 1 from jobs j where j.id = job_id)
+  workshop_id = (select current_workshop_id()) and exists (select 1 from jobs j where j.id = job_id)
 );
-create policy "write job lines" on job_lines for all using (workshop_id = current_workshop_id() and has_role('owner', 'advisor'))
-  with check (workshop_id = current_workshop_id() and has_role('owner', 'advisor'));
+create policy "write job lines" on job_lines for all
+  using (workshop_id = (select current_workshop_id()) and (select has_role('owner', 'advisor')))
+  with check (workshop_id = (select current_workshop_id()) and (select has_role('owner', 'advisor'))
+              and exists (select 1 from jobs j where j.id = job_id));
 
--- Money: never visible to technicians, never deleted, only created through functions.
-create policy "read invoices" on invoices for select using (workshop_id = current_workshop_id() and has_role('owner', 'advisor', 'cashier'));
-create policy "read invoice lines" on invoice_lines for select using (workshop_id = current_workshop_id() and has_role('owner', 'advisor', 'cashier'));
-create policy "read payments" on payments for select using (workshop_id = current_workshop_id() and has_role('owner', 'advisor', 'cashier'));
-create policy "read stock movements" on stock_movements for select using (workshop_id = current_workshop_id() and has_role('owner', 'advisor', 'cashier'));
-create policy "owner reads audit log" on audit_log for select using (workshop_id = current_workshop_id() and has_role('owner'));
+-- Money: hidden from technicians, never deleted, only created through functions.
+create policy "read invoices" on invoices for select
+  using (workshop_id = (select current_workshop_id()) and (select has_role('owner', 'advisor', 'cashier')));
+create policy "read invoice lines" on invoice_lines for select
+  using (workshop_id = (select current_workshop_id()) and (select has_role('owner', 'advisor', 'cashier')));
+create policy "read payments" on payments for select
+  using (workshop_id = (select current_workshop_id()) and (select has_role('owner', 'advisor', 'cashier')));
+create policy "read stock movements" on stock_movements for select
+  using (workshop_id = (select current_workshop_id()) and (select has_role('owner', 'advisor', 'cashier')));
+create policy "owner reads audit log" on audit_log for select
+  using (workshop_id = (select current_workshop_id()) and (select has_role('owner')));
 
 -- ---------------------------------------------------------------------------
--- Functions for operations that must be atomic
+-- Workflow functions (atomic; each checks role and workshop itself)
 -- ---------------------------------------------------------------------------
 
--- Called once after a new user signs up: creates the workshop and makes them owner.
+-- Called after a new user signs up: creates their workshop and makes them owner.
 create or replace function create_workshop(p_name text, p_owner_name text, p_city text default '', p_phone text default '')
 returns uuid language plpgsql security definer set search_path = public as $$
 declare
   v_ws uuid;
+  v_email text := coalesce(auth.jwt() ->> 'email', '');
 begin
   if auth.uid() is null then raise exception 'Not signed in'; end if;
   if exists (select 1 from profiles where id = auth.uid()) then raise exception 'This account already belongs to a workshop'; end if;
+  if coalesce(trim(p_name), '') = '' or coalesce(trim(p_owner_name), '') = '' then
+    raise exception 'Workshop name and your name are required';
+  end if;
   insert into workshops (name, city, phone, email)
-    values (trim(p_name), p_city, p_phone, coalesce((select email from auth.users where id = auth.uid()), ''))
+    values (trim(p_name), coalesce(trim(p_city), ''), coalesce(trim(p_phone), ''), v_email)
     returning id into v_ws;
   insert into profiles (id, workshop_id, name, email, role)
-    values (auth.uid(), v_ws, trim(p_owner_name), coalesce((select email from auth.users where id = auth.uid()), ''), 'owner');
+    values (auth.uid(), v_ws, trim(p_owner_name), v_email, 'owner');
+  insert into canned_jobs (workshop_id, title, lines) values
+    (v_ws, 'Oil & filter change', '[{"kind":"labor","description":"Drain and refill engine oil, replace filter","qty":0.5,"unitPrice":200000}]'),
+    (v_ws, 'Front brake pad replacement', '[{"kind":"labor","description":"Replace front brake pads, clean callipers","qty":1.5,"unitPrice":200000}]'),
+    (v_ws, 'Engine tuning', '[{"kind":"labor","description":"Engine tuning, plugs and throttle clean","qty":2,"unitPrice":200000}]'),
+    (v_ws, 'General inspection', '[{"kind":"labor","description":"Multi-point vehicle inspection","qty":0.5,"unitPrice":200000}]');
   insert into audit_log (workshop_id, user_id, action, entity, entity_id, summary)
-    values (v_ws, auth.uid(), 'workshop.created', 'workshop', v_ws, 'Workshop created');
+    values (v_ws, auth.uid(), 'workshop.created', 'workshop', v_ws, 'Workshop "' || trim(p_name) || '" created');
   return v_ws;
 end $$;
 
--- Opens a job card with the next RO number (row lock on the workshop keeps numbers unique).
+-- Opens a job card with the next RO number (the row lock on the workshop keeps numbers unique).
 create or replace function open_repair_order(p_customer uuid, p_vehicle uuid, p_concern text, p_odometer integer,
   p_promised_at timestamptz, p_technician uuid)
 returns uuid language plpgsql security definer set search_path = public as $$
 declare
   v_ws uuid := current_workshop_id();
+  v_vehicle vehicles%rowtype;
   v_num integer;
   v_id uuid;
 begin
-  if not has_role('owner', 'advisor') then raise exception 'Not allowed'; end if;
-  if not exists (select 1 from vehicles where id = p_vehicle and customer_id = p_customer and workshop_id = v_ws) then
-    raise exception 'Vehicle does not belong to this customer';
+  if not has_role('owner', 'advisor') then raise exception 'You don''t have permission to open job cards'; end if;
+  select * into v_vehicle from vehicles where id = p_vehicle and workshop_id = v_ws;
+  if not found or v_vehicle.customer_id <> p_customer then raise exception 'That vehicle belongs to a different customer'; end if;
+  if p_odometer is not null and v_vehicle.odometer is not null and p_odometer < v_vehicle.odometer then
+    raise exception 'Odometer can''t go backwards (last recorded % km)', v_vehicle.odometer;
+  end if;
+  if p_technician is not null and not exists (
+    select 1 from profiles where id = p_technician and workshop_id = v_ws and role = 'technician' and active
+  ) then
+    raise exception 'Technician not found';
   end if;
   update workshops set next_ro_seq = next_ro_seq + 1 where id = v_ws returning next_ro_seq - 1 into v_num;
   insert into repair_orders (workshop_id, number, customer_id, vehicle_id, concern, odometer_in, promised_at, technician_id, created_by)
-    values (v_ws, v_num, p_customer, p_vehicle, coalesce(p_concern, ''), p_odometer, p_promised_at, p_technician, auth.uid())
+    values (v_ws, v_num, p_customer, p_vehicle, coalesce(trim(p_concern), ''), p_odometer, p_promised_at, p_technician, auth.uid())
     returning id into v_id;
   if p_odometer is not null then
-    update vehicles set odometer = greatest(coalesce(odometer, 0), p_odometer) where id = p_vehicle;
+    update vehicles set odometer = p_odometer where id = p_vehicle;
   end if;
   insert into audit_log (workshop_id, user_id, action, entity, entity_id, summary)
-    values (v_ws, auth.uid(), 'ro.created', 'repair_order', v_id, 'RO-' || v_num || ' opened');
+    values (v_ws, auth.uid(), 'ro.created', 'repair_order', v_id, 'RO-' || v_num || ' opened for ' || v_vehicle.plate);
   return v_id;
+end $$;
+
+-- Approve / decline one job. The first approval starts work; losing every approval returns the card to estimate.
+create or replace function set_job_approval(p_job uuid, p_approval job_approval) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  v_ro repair_orders%rowtype;
+  v_any boolean;
+  v_title text;
+begin
+  if not has_role('owner', 'advisor') then raise exception 'You don''t have permission to do that'; end if;
+  select r.* into v_ro from repair_orders r join jobs j on j.repair_order_id = r.id
+    where j.id = p_job and r.workshop_id = current_workshop_id() for update of r;
+  if not found then raise exception 'Job not found'; end if;
+  if v_ro.status not in ('estimate', 'in_progress') then raise exception 'This job card is closed for editing. Reopen it first.'; end if;
+  update jobs set approval = p_approval, done = case when p_approval = 'approved' then done else false end
+    where id = p_job returning title into v_title;
+  select exists (select 1 from jobs where repair_order_id = v_ro.id and approval = 'approved') into v_any;
+  update repair_orders set
+    status = case
+      when v_ro.status = 'estimate' and v_any then 'in_progress'::ro_status
+      when v_ro.status = 'in_progress' and not v_any then 'estimate'::ro_status
+      else v_ro.status end,
+    updated_at = now()
+  where id = v_ro.id;
+  insert into audit_log (workshop_id, user_id, action, entity, entity_id, summary)
+    values (v_ro.workshop_id, auth.uid(), 'ro.approval', 'repair_order', v_ro.id, v_title || ': ' || p_approval);
+end $$;
+
+-- Tick a job off. Technicians may only do this on cars assigned to them.
+create or replace function set_job_done(p_job uuid, p_done boolean) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  v_ro uuid;
+  v_status ro_status;
+  v_tech uuid;
+  v_approval job_approval;
+begin
+  select r.id, r.status, r.technician_id, j.approval into v_ro, v_status, v_tech, v_approval
+    from repair_orders r join jobs j on j.repair_order_id = r.id
+    where j.id = p_job and r.workshop_id = current_workshop_id();
+  if v_ro is null then raise exception 'Job not found'; end if;
+  if not (has_role('owner', 'advisor') or (has_role('technician') and v_tech = auth.uid())) then
+    raise exception 'This car isn''t assigned to you';
+  end if;
+  if v_status <> 'in_progress' then raise exception 'Jobs can only be ticked off while work is in progress'; end if;
+  if v_approval <> 'approved' then raise exception 'Only approved jobs can be ticked off'; end if;
+  update jobs set done = p_done where id = p_job;
+  update repair_orders set updated_at = now() where id = v_ro;
+end $$;
+
+-- Board label such as "Waiting on parts". Technicians may set it on their own cars.
+create or replace function set_ro_label(p_ro uuid, p_label work_label) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  v_ro repair_orders%rowtype;
+begin
+  select * into v_ro from repair_orders where id = p_ro and workshop_id = current_workshop_id();
+  if not found then raise exception 'Job card not found'; end if;
+  if not (has_role('owner', 'advisor') or (has_role('technician') and v_ro.technician_id = auth.uid())) then
+    raise exception 'This car isn''t assigned to you';
+  end if;
+  if v_ro.status not in ('estimate', 'in_progress') then raise exception 'Labels can only change while the car is in the workshop'; end if;
+  update repair_orders set label = p_label, updated_at = now() where id = p_ro;
 end $$;
 
 -- Moves a job card to completed and takes approved parts out of stock in one transaction.
@@ -380,21 +627,26 @@ declare
   v_ro repair_orders%rowtype;
   r record;
 begin
-  if not has_role('owner', 'advisor') then raise exception 'Not allowed'; end if;
+  if not has_role('owner', 'advisor') then raise exception 'You don''t have permission to do that'; end if;
   select * into v_ro from repair_orders where id = p_ro and workshop_id = current_workshop_id() for update;
   if not found then raise exception 'Job card not found'; end if;
   if v_ro.status <> 'in_progress' then raise exception 'Only jobs in progress can be completed'; end if;
   if exists (select 1 from jobs where repair_order_id = p_ro and approval = 'pending') then
     raise exception 'Approve or decline every pending job first';
   end if;
+  if not exists (select 1 from jobs j join job_lines l on l.job_id = j.id where j.repair_order_id = p_ro and j.approval = 'approved') then
+    raise exception 'There is no approved work to complete';
+  end if;
   for r in
-    select l.part_id, sum(l.qty) as qty
-    from job_lines l join jobs j on j.id = l.job_id
+    select l.part_id, sum(l.qty) as qty, max(p.name) as name, max(p.qty_on_hand) as on_hand
+    from job_lines l join jobs j on j.id = l.job_id join parts p on p.id = l.part_id
     where j.repair_order_id = p_ro and j.approval = 'approved' and l.kind = 'part'
     group by l.part_id
   loop
     update parts set qty_on_hand = qty_on_hand - r.qty where id = r.part_id and qty_on_hand >= r.qty;
-    if not found then raise exception 'Not enough stock for part %', r.part_id; end if;
+    if not found then
+      raise exception 'Not enough stock: % needs %, only % in stock. Receive stock first.', r.name, r.qty, r.on_hand;
+    end if;
     insert into stock_movements (workshop_id, part_id, qty, reason, repair_order_id, note, user_id)
       values (v_ro.workshop_id, r.part_id, -r.qty, 'used_on_job', p_ro, 'Used on RO-' || v_ro.number, auth.uid());
   end loop;
@@ -413,9 +665,9 @@ declare
   v_ro repair_orders%rowtype;
   r record;
 begin
-  if not has_role('owner', 'advisor') then raise exception 'Not allowed'; end if;
+  if not has_role('owner', 'advisor') then raise exception 'You don''t have permission to do that'; end if;
   select * into v_ro from repair_orders where id = p_ro and workshop_id = current_workshop_id() for update;
-  if not found or v_ro.status <> 'completed' then raise exception 'Only completed, uninvoiced job cards can be reopened'; end if;
+  if not found or v_ro.status <> 'completed' then raise exception 'Only completed (not yet invoiced) job cards can be reopened'; end if;
   if v_ro.stock_deducted then
     for r in
       select l.part_id, sum(l.qty) as qty
@@ -432,7 +684,25 @@ begin
     set status = 'in_progress', stock_deducted = false, label = 'in_bay', completed_at = null, updated_at = now()
     where id = p_ro;
   insert into audit_log (workshop_id, user_id, action, entity, entity_id, summary)
-    values (v_ro.workshop_id, auth.uid(), 'ro.reopened', 'repair_order', p_ro, 'RO-' || v_ro.number || ' reopened');
+    values (v_ro.workshop_id, auth.uid(), 'ro.reopened', 'repair_order', p_ro, 'RO-' || v_ro.number || ' reopened, parts returned to stock');
+end $$;
+
+create or replace function cancel_repair_order(p_ro uuid, p_reason text) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  v_ro repair_orders%rowtype;
+begin
+  if not has_role('owner', 'advisor') then raise exception 'You don''t have permission to do that'; end if;
+  if coalesce(trim(p_reason), '') = '' then raise exception 'Give a reason for cancelling'; end if;
+  select * into v_ro from repair_orders where id = p_ro and workshop_id = current_workshop_id() for update;
+  if not found then raise exception 'Job card not found'; end if;
+  if v_ro.status not in ('estimate', 'in_progress') then raise exception 'Only estimates and jobs in progress can be cancelled'; end if;
+  update repair_orders
+    set status = 'cancelled', updated_at = now(),
+        notes = trim(both e'\n' from v_ro.notes || e'\n' || 'Cancelled: ' || trim(p_reason))
+    where id = p_ro;
+  insert into audit_log (workshop_id, user_id, action, entity, entity_id, summary)
+    values (v_ro.workshop_id, auth.uid(), 'ro.cancelled', 'repair_order', p_ro, 'RO-' || v_ro.number || ': ' || trim(p_reason));
 end $$;
 
 -- Issues the invoice for a completed job card. Totals are computed here, never sent by the browser,
@@ -448,7 +718,7 @@ declare
   v_seq integer;
   v_inv uuid;
 begin
-  if not has_role('owner', 'advisor', 'cashier') then raise exception 'Not allowed'; end if;
+  if not has_role('owner', 'advisor', 'cashier') then raise exception 'You don''t have permission to do that'; end if;
   select * into v_ro from repair_orders where id = p_ro and workshop_id = current_workshop_id() for update;
   if not found then raise exception 'Job card not found'; end if;
   if v_ro.status <> 'completed' then raise exception 'Complete the work before creating the invoice'; end if;
@@ -465,8 +735,7 @@ begin
   v_disc := least(greatest(v_ro.discount, 0), v_sub);
   v_parts_disc := case when v_sub = 0 then 0 else round(v_disc::numeric * v_parts / v_sub) end;
 
-  update workshops set next_invoice_seq = next_invoice_seq + 1 where id = v_ro.workshop_id
-    returning * into v_ws;
+  update workshops set next_invoice_seq = next_invoice_seq + 1 where id = v_ro.workshop_id returning * into v_ws;
   v_seq := v_ws.next_invoice_seq - 1;
   v_parts_tax := round((v_parts - v_parts_disc) * v_ws.parts_tax_rate / 100);
   v_labor_tax := round((v_labor + v_fees - (v_disc - v_parts_disc)) * v_ws.labor_tax_rate / 100);
@@ -486,7 +755,8 @@ begin
 
   update repair_orders set status = 'invoiced', invoice_id = v_inv, updated_at = now() where id = p_ro;
   insert into audit_log (workshop_id, user_id, action, entity, entity_id, summary)
-    values (v_ro.workshop_id, auth.uid(), 'invoice.created', 'invoice', v_inv, 'Invoice for RO-' || v_ro.number);
+    values (v_ro.workshop_id, auth.uid(), 'invoice.created', 'invoice', v_inv,
+            v_ws.invoice_prefix || '-' || lpad(v_seq::text, 6, '0') || ' for RO-' || v_ro.number);
   return v_inv;
 end $$;
 
@@ -497,15 +767,16 @@ declare
   v_inv invoices%rowtype;
   v_paid bigint;
 begin
-  if not has_role('owner', 'advisor', 'cashier') then raise exception 'Not allowed'; end if;
+  if not has_role('owner', 'advisor', 'cashier') then raise exception 'You don''t have permission to take payments'; end if;
   select * into v_inv from invoices where id = p_invoice and workshop_id = current_workshop_id() for update;
   if not found then raise exception 'Invoice not found'; end if;
-  if v_inv.status = 'void' then raise exception 'Cannot take payment on a void invoice'; end if;
+  if v_inv.status = 'void' then raise exception 'Can''t take payment on a void invoice'; end if;
   select coalesce(sum(amount), 0) into v_paid from payments where invoice_id = p_invoice;
-  if p_amount <= 0 or p_amount > v_inv.total - v_paid then raise exception 'Amount must be between 1 and the balance due'; end if;
+  if p_amount <= 0 then raise exception 'Enter an amount more than zero'; end if;
+  if p_amount > v_inv.total - v_paid then raise exception 'Amount is more than the balance due'; end if;
 
   insert into payments (workshop_id, invoice_id, method, amount, reference, user_id)
-    values (v_inv.workshop_id, p_invoice, p_method, p_amount, coalesce(p_reference, ''), auth.uid());
+    values (v_inv.workshop_id, p_invoice, p_method, p_amount, coalesce(trim(p_reference), ''), auth.uid());
   if v_paid + p_amount = v_inv.total then
     update invoices set status = 'paid' where id = p_invoice;
     update repair_orders set status = 'closed', updated_at = now() where id = v_inv.repair_order_id;
@@ -526,23 +797,41 @@ begin
   if coalesce(trim(p_reason), '') = '' then raise exception 'Give a reason for voiding'; end if;
   select * into v_inv from invoices where id = p_invoice and workshop_id = current_workshop_id() for update;
   if not found or v_inv.status = 'void' then raise exception 'Invoice not found or already void'; end if;
-  if exists (select 1 from payments where invoice_id = p_invoice) then raise exception 'Invoice has payments'; end if;
+  if exists (select 1 from payments where invoice_id = p_invoice) then
+    raise exception 'This invoice has payments. Refunds and credit notes come in a later phase.';
+  end if;
   update invoices set status = 'void', void_reason = trim(p_reason) where id = p_invoice;
   update repair_orders set status = 'completed', invoice_id = null, updated_at = now() where id = v_inv.repair_order_id;
   insert into audit_log (workshop_id, user_id, action, entity, entity_id, summary)
     values (v_inv.workshop_id, auth.uid(), 'invoice.voided', 'invoice', p_invoice, v_inv.number || ' voided: ' || trim(p_reason));
 end $$;
 
--- Manual stock change (received goods, stock count, damage) with a reason.
-create or replace function adjust_stock(p_part uuid, p_qty numeric, p_note text) returns void
-language plpgsql security definer set search_path = public as $$
+-- Stock change with a reason: received goods, stock count, damage, or opening stock for a new part.
+create or replace function adjust_stock(p_part uuid, p_qty numeric, p_note text, p_reason movement_reason default 'adjustment')
+returns void language plpgsql security definer set search_path = public as $$
 declare
   v_ws uuid := current_workshop_id();
+  v_part parts%rowtype;
 begin
-  if not has_role('owner', 'cashier') then raise exception 'Not allowed'; end if;
-  if p_qty = 0 or coalesce(trim(p_note), '') = '' then raise exception 'Quantity and reason are required'; end if;
-  update parts set qty_on_hand = qty_on_hand + p_qty where id = p_part and workshop_id = v_ws and qty_on_hand + p_qty >= 0;
-  if not found then raise exception 'Part not found or not enough stock'; end if;
+  if not has_role('owner', 'cashier') then raise exception 'You don''t have permission to change stock'; end if;
+  if p_reason not in ('adjustment', 'opening') then raise exception 'Invalid reason'; end if;
+  if p_qty = 0 or coalesce(trim(p_note), '') = '' then raise exception 'Enter a quantity and a reason'; end if;
+  select * into v_part from parts where id = p_part and workshop_id = v_ws for update;
+  if not found then raise exception 'Part not found'; end if;
+  if v_part.qty_on_hand + p_qty < 0 then raise exception 'Only % in stock — can''t remove %', v_part.qty_on_hand, -p_qty; end if;
+  update parts set qty_on_hand = qty_on_hand + p_qty where id = p_part;
   insert into stock_movements (workshop_id, part_id, qty, reason, note, user_id)
-    values (v_ws, p_part, p_qty, 'adjustment', trim(p_note), auth.uid());
+    values (v_ws, p_part, p_qty, p_reason, trim(p_note), auth.uid());
+  insert into audit_log (workshop_id, user_id, action, entity, entity_id, summary)
+    values (v_ws, auth.uid(), 'stock.adjusted', 'part', p_part,
+            case when p_qty > 0 then '+' else '' end || p_qty || ' ' || v_part.name || ': ' || trim(p_note));
 end $$;
+
+-- ---------------------------------------------------------------------------
+-- Access: signed-in users only. Anonymous visitors can't touch any table.
+-- ---------------------------------------------------------------------------
+revoke all on all tables in schema public from anon;
+grant select, insert, update, delete on all tables in schema public to authenticated;
+grant all on all tables in schema public to service_role;
+revoke execute on all functions in schema public from public, anon;
+grant execute on all functions in schema public to authenticated, service_role;

@@ -40,9 +40,9 @@ export default function PartPage() {
   const canEdit = can(user.role, "inventory_edit");
   const margin = part.price > 0 ? Math.round(((part.price - part.cost) / part.price) * 100) : 0;
 
-  const adjust = (e: React.FormEvent) => {
+  const adjust = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (attempt(() => adjustStock(part.id, Number(qty), note), "Stock updated")) {
+    if (await attempt(() => adjustStock(part.id, Number(qty), note), "Stock updated")) {
       setQty("");
       setNote("");
     }

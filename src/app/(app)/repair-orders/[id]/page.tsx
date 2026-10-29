@@ -32,6 +32,7 @@ export default function RepairOrderPage() {
   const [newJob, setNewJob] = useState("");
   const [modal, setModal] = useState<null | "cancel" | "complete" | { partFor: string }>(null);
   const [cancelReason, setCancelReason] = useState("");
+  const [busy, setBusy] = useState(false);
 
   if (!ro) {
     return <EmptyState title="Job card not found" action={<Link href="/board"><Button variant="secondary">Back to Job Board</Button></Link>} />;
@@ -44,13 +45,16 @@ export default function RepairOrderPage() {
   const technicians = users.filter((u) => u.role === "technician" && (u.active || u.id === ro.technicianId));
   const pending = ro.jobs.filter((j) => j.approval === "pending").length;
 
-  const addJob = (e: React.FormEvent) => {
+  const addJob = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (attempt(() => a.addJob(ro.id, newJob))) setNewJob("");
+    if (await attempt(() => a.addJob(ro.id, newJob))) setNewJob("");
   };
 
-  const createInvoice = () => {
-    const invId = attemptResult(() => a.createInvoice(ro.id), "Invoice created");
+  const createInvoice = async () => {
+    if (busy) return;
+    setBusy(true);
+    const invId = await attemptResult(() => a.createInvoice(ro.id), "Invoice created");
+    setBusy(false);
     if (invId) router.push(`/invoices/${invId}`);
   };
 
@@ -95,7 +99,7 @@ export default function RepairOrderPage() {
               <Button variant="secondary" onClick={() => attempt(() => a.reopenRo(ro.id), "Job card reopened — parts returned to stock")}>
                 <RotateCcw className="h-4 w-4" /> Reopen
               </Button>
-              {can(user.role, "invoices") && <Button onClick={createInvoice}><FileText className="h-4 w-4" /> Create invoice</Button>}
+              {can(user.role, "invoices") && <Button onClick={createInvoice} disabled={busy}><FileText className="h-4 w-4" /> Create invoice</Button>}
             </>
           )}
           {ro.invoiceId && (
@@ -166,8 +170,8 @@ export default function RepairOrderPage() {
         <PartPicker
           stock={stock}
           onClose={() => setModal(null)}
-          onPick={(part, qty) => {
-            if (attempt(() => a.addLine(ro.id, modal.partFor, { kind: "part", description: part.name, partId: part.id, qty, unitPrice: part.price }), `${part.name} added`)) setModal(null);
+          onPick={async (part, qty) => {
+            if (await attempt(() => a.addLine(ro.id, modal.partFor, { kind: "part", description: part.name, partId: part.id, qty, unitPrice: part.price }), `${part.name} added`)) setModal(null);
           }}
         />
       )}
@@ -179,7 +183,7 @@ export default function RepairOrderPage() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setModal(null)}>Keep it</Button>
-            <Button variant="danger" onClick={() => attempt(() => a.cancelRo(ro.id, cancelReason), "Job card cancelled") && setModal(null)}>Cancel job card</Button>
+            <Button variant="danger" onClick={async () => { if (await attempt(() => a.cancelRo(ro.id, cancelReason), "Job card cancelled")) setModal(null); }}>Cancel job card</Button>
           </>
         }
       >
@@ -321,8 +325,8 @@ function LineRow({ ro, job, line, editable, stockRow }: { ro: RepairOrder; job: 
   const [qty, setQty] = useState(String(line.qty));
   const [price, setPrice] = useState(String(toRupees(line.unitPrice)));
 
-  const commit = (patch: Partial<Pick<Line, "description" | "qty" | "unitPrice">>, reset: () => void) => {
-    if (!attempt(() => a.updateLine(ro.id, job.id, line.id, patch))) reset();
+  const commit = async (patch: Partial<Pick<Line, "description" | "qty" | "unitPrice">>, reset: () => void) => {
+    if (!(await attempt(() => a.updateLine(ro.id, job.id, line.id, patch)))) reset();
   };
 
   const short = stockRow && !ro.stockDeducted && job.approval !== "declined" && stockRow.available < 0;
@@ -402,7 +406,10 @@ function TotalsCard({ ro, totals, canDiscount }: { ro: RepairOrder; totals: Retu
             <input
               type="number" min="0" step="1" value={discount}
               onChange={(e) => setDiscount(e.target.value)}
-              onBlur={() => toPaisa(discount) !== ro.discount && !attempt(() => updateRo(ro.id, { discount: toPaisa(discount) }), "Discount updated") && setDiscount(String(toRupees(ro.discount)))}
+              onBlur={async () => {
+                if (toPaisa(discount) === ro.discount) return;
+                if (!(await attempt(() => updateRo(ro.id, { discount: toPaisa(discount) }), "Discount updated"))) setDiscount(String(toRupees(ro.discount)));
+              }}
               className="w-28 rounded border border-slate-200 px-2 py-0.5 text-right focus:border-orange-500 focus:outline-none"
             />
           ) : (
@@ -419,6 +426,7 @@ function TotalsCard({ ro, totals, canDiscount }: { ro: RepairOrder; totals: Retu
 
 function CompleteModal({ ro, onClose }: { ro: RepairOrder; onClose: () => void }) {
   const completeWork = useStore((s) => s.completeWork);
+  const [busy, setBusy] = useState(false);
   const look = useLookups();
   const usage = useMemo(() => [...approvedPartUsage(ro)], [ro]);
   const declined = ro.jobs.filter((j) => j.approval === "declined");
@@ -430,7 +438,12 @@ function CompleteModal({ ro, onClose }: { ro: RepairOrder; onClose: () => void }
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Not yet</Button>
-          <Button variant="success" onClick={() => attempt(() => completeWork(ro.id), "Work completed — parts taken out of stock") && onClose()}>
+          <Button variant="success" disabled={busy} onClick={async () => {
+            setBusy(true);
+            const ok = await attempt(() => completeWork(ro.id), "Work completed — parts taken out of stock");
+            setBusy(false);
+            if (ok) onClose();
+          }}>
             Complete work
           </Button>
         </>
@@ -457,7 +470,7 @@ function CompleteModal({ ro, onClose }: { ro: RepairOrder; onClose: () => void }
   );
 }
 
-function PartPicker({ stock, onClose, onPick }: { stock: StockRow[]; onClose: () => void; onPick: (part: StockRow, qty: number) => void }) {
+function PartPicker({ stock, onClose, onPick }: { stock: StockRow[]; onClose: () => void; onPick: (part: StockRow, qty: number) => void | Promise<void> }) {
   const [q, setQ] = useState("");
   const [qty, setQty] = useState("1");
   const list = useMemo(() => {

@@ -3,11 +3,11 @@
 import { useEffect, type ReactNode } from "react";
 import { useStore } from "@/lib/store";
 
-/** Loads saved data from the browser once, then renders children. */
+/** Restores the signed-in session and loads the workshop's data once, then renders children. */
 export function Hydrate({ children }: { children: ReactNode }) {
   const hydrated = useStore((s) => s.hydrated);
   useEffect(() => {
-    Promise.resolve(useStore.persist.rehydrate()).finally(() => useStore.setState({ hydrated: true }));
+    void useStore.getState().init();
   }, []);
   if (!hydrated) {
     return (

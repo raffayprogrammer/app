@@ -4,13 +4,18 @@ End-to-end point of sale and job card system for car workshops: check a car in, 
 
 Built as a multi-workshop product: each workshop signs up and only ever sees its own data.
 
-> **Current stage: Phase 0 + Phase 1, demo mode.** All data is saved in the browser (localStorage), so the app runs and deploys with no database. The Supabase schema for production is ready in `supabase/migrations/` (see [Moving to Supabase](#moving-to-supabase)).
+> **Current stage: Phase 0 + Phase 1 on Supabase** (Postgres + Auth). Every workshop's data is isolated by row-level security.
 
-## Run it
+## Set up
+
+1. Create a Supabase project. In **SQL Editor**, paste and run `supabase/migrations/0001_init.sql`.
+2. Copy `.env.example` to `.env.local` and fill in the project URL, publishable key and secret key.
+3. Install and run:
 
 ```bash
 npm install
-npm run dev        # http://localhost:3000
+npm run seed:demo   # optional: creates the demo workshop and its 5 logins
+npm run dev         # http://localhost:3000
 ```
 
 Sign in with one of the demo accounts on the login page (password `demo123`):
@@ -62,27 +67,30 @@ src/
   components/         UI kit, app shell, forms, invoice document, thermal receipt
   lib/
     types.ts          domain model (mirrors the SQL tables)
-    store.ts          data layer: every business rule lives in these actions
+    store.ts          data layer: actions that read/write Supabase
+    supabase/         browser client + row mapping
     calc.ts           totals, tax, stock reservation (mirrored in SQL issue_invoice)
     permissions.ts    role → permission map
     printer.ts        Web Serial + ESC/POS receipt builder
-    seed.ts           demo workshop data
-supabase/migrations/  production schema with row-level security
+    seed.ts, demo.ts  demo workshop data (loaded by scripts/seed-demo.ts)
+supabase/migrations/  database schema with row-level security
+scripts/seed-demo.ts  creates the demo workshop in Supabase
 ```
 
-## Moving to Supabase
+## Database (Supabase)
 
-`supabase/migrations/0001_init.sql` contains the production database:
+`supabase/migrations/0001_init.sql`:
 
 - Every table has `workshop_id`; row-level security limits each user to their own workshop. Technicians can't read invoices or payments, and only see job cards assigned to them.
-- Money is integer paisa; invoices, payments, stock movements and the audit log have no delete policies.
-- Atomic operations are SQL functions: `create_workshop`, `open_repair_order`, `complete_repair_order`, `reopen_repair_order`, `issue_invoice` (computes totals server-side, gap-free numbering), `record_payment`, `void_invoice`, `adjust_stock`.
+- Money is integer paisa; invoices, payments, stock movements and the activity log can't be deleted.
+- Workflow steps are SQL functions that run in one transaction: `create_workshop`, `open_repair_order`, `set_job_approval`, `set_job_done`, `set_ro_label`, `complete_repair_order`, `reopen_repair_order`, `cancel_repair_order`, `issue_invoice` (computes totals server-side, gap-free numbering), `record_payment`, `void_invoice`, `adjust_stock`.
+- Guard triggers stop direct edits to statuses, numbers and stock, and stop changes to closed job cards.
 
-Steps: create a Supabase project, run the migration, copy `.env.example` to `.env.local` and fill in the keys, then replace the actions in `src/lib/store.ts` with Supabase calls (the screens don't change).
+The browser talks to Supabase with the publishable key and the user's session. Creating staff logins needs the secret key, so it runs in a server action (`src/app/actions/team.ts`).
 
 ## Deploy
 
-Push to GitHub and import the repo in Vercel. No environment variables are needed in demo mode.
+Push to GitHub and import the repo in Vercel. Add the variables from `.env.example` in Vercel → Settings → Environment Variables. In Supabase → Authentication → URL Configuration, set the Site URL to your Vercel domain so confirmation emails link back to the app.
 
 ## Coming next
 

@@ -1,4 +1,5 @@
 import { approvedJobs, approvedPartUsage, computeTotals, lineAmount } from "./calc";
+import { DEMO_ACCOUNTS, DEMO_WORKSHOP } from "./demo";
 import { uid } from "./format";
 import { toPaisa } from "./money";
 import type {
@@ -9,7 +10,7 @@ import type {
 const ago = (days: number, hours = 0) => new Date(Date.now() - (days * 24 + hours) * 3600_000).toISOString();
 const ahead = (hours: number) => new Date(Date.now() + hours * 3600_000).toISOString();
 
-export const DEMO_PASSWORD = "demo123";
+export { DEMO_PASSWORD } from "./demo";
 
 export function defaultWorkshop(input: Partial<Workshop> & { name: string }): Workshop {
   return {
@@ -31,20 +32,9 @@ export function defaultWorkshop(input: Partial<Workshop> & { name: string }): Wo
   };
 }
 
-/** Labour-only canned jobs every new workshop starts with. */
-export function starterCannedJobs(ws: Workshop): CannedJob[] {
-  const labor = (description: string, qty: number) => ({ kind: "labor" as const, description, qty, unitPrice: ws.laborRate });
-  return [
-    { id: uid(), workshopId: ws.id, title: "Oil & filter change", lines: [labor("Drain and refill engine oil, replace filter", 0.5)] },
-    { id: uid(), workshopId: ws.id, title: "Front brake pad replacement", lines: [labor("Replace front brake pads, clean callipers", 1.5)] },
-    { id: uid(), workshopId: ws.id, title: "Engine tuning", lines: [labor("Engine tuning, plugs and throttle clean", 2)] },
-    { id: uid(), workshopId: ws.id, title: "General inspection", lines: [labor("Multi-point vehicle inspection", 0.5)] },
-  ];
-}
-
 export function buildDemoData(): Data {
   const ws = defaultWorkshop({
-    name: "Al-Noor Auto Workshop",
+    name: DEMO_WORKSHOP,
     phone: "0300-1234567",
     email: "info@alnoorauto.pk",
     address: "Plot 14, Main Boulevard, Gulberg III",
@@ -54,14 +44,10 @@ export function buildDemoData(): Data {
   });
 
   const mkUser = (name: string, email: string, role: User["role"]): User => ({
-    id: uid(), workshopId: ws.id, name, email, password: DEMO_PASSWORD, role, active: true, createdAt: ago(60),
+    id: uid(), workshopId: ws.id, name, email, role, active: true, createdAt: ago(60),
   });
-  const owner = mkUser("Usman Tariq", "owner@demo.pk", "owner");
-  const advisor = mkUser("Hamza Ali", "advisor@demo.pk", "advisor");
-  const tech1 = mkUser("Imran Khan", "tech@demo.pk", "technician");
-  const tech2 = mkUser("Bilal Ahmed", "tech2@demo.pk", "technician");
-  const cashier = mkUser("Ayesha Noor", "cashier@demo.pk", "cashier");
-  const users = [owner, advisor, tech1, tech2, cashier];
+  const users = DEMO_ACCOUNTS.map((a) => mkUser(a.name, a.email, a.role));
+  const [owner, advisor, tech1, tech2, cashier] = users;
 
   // ---- Parts -------------------------------------------------------------
   const partList: [string, string, string, string, string, string, number, number, number][] = [
