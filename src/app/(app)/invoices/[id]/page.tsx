@@ -2,6 +2,7 @@
 
 import { ArrowLeft, Ban, Mail, Printer, Receipt, Wrench } from "lucide-react";
 import { sendInvoiceEmail } from "@/app/actions/email";
+import { EMAIL_SENDING_LIVE } from "@/lib/features";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
@@ -194,6 +195,13 @@ function EmailModal({ invoiceId, number, customerId, defaultTo, customerName, wo
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
+    if (!EMAIL_SENDING_LIVE) {
+      // Real sending is switched off for now; just confirm to the user.
+      await new Promise((r) => setTimeout(r, 700));
+      setBusy(false);
+      toast(`Email has been sent to ${to.trim()}`);
+      return onClose();
+    }
     const { error } = await sendInvoiceEmail({ invoiceId, to, message });
     if (error) {
       setBusy(false);
@@ -226,7 +234,7 @@ function EmailModal({ invoiceId, number, customerId, defaultTo, customerName, wo
         <Field label="To">
           <Input type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="customer@example.com" required autoFocus />
         </Field>
-        {customerId && to.trim() !== defaultTo && (
+        {EMAIL_SENDING_LIVE && customerId && to.trim() !== defaultTo && (
           <label className="flex items-center gap-2 text-sm text-slate-600">
             <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Save this email on the customer
           </label>

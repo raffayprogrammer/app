@@ -4,6 +4,7 @@ import { Mail, Pencil, Plug, PlugZap, Plus, Printer, Trash2 } from "lucide-react
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState, useSyncExternalStore } from "react";
 import { disconnectGmail, getEmailConnection } from "@/app/actions/email";
+import { EMAIL_SENDING_LIVE } from "@/lib/features";
 import { createStaffAccount } from "@/app/actions/team";
 import { attempt, toast } from "@/components/toast";
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, PageHeader, Select, Tabs, tableCls, tdCls, thCls } from "@/components/ui";
@@ -51,12 +52,12 @@ function Settings() {
     owner && { id: "billing", label: "Billing & tax" },
     can(user.role, "users") && { id: "team", label: "Team" },
     owner && { id: "canned", label: "Canned jobs" },
-    owner && { id: "email", label: "Email" },
+    owner && EMAIL_SENDING_LIVE && { id: "email", label: "Email" },
     { id: "printer", label: "Printer" },
     can(user.role, "audit") && { id: "activity", label: "Activity log" },
   ];
   const tabs = all.filter((t): t is { id: Tab; label: string } => !!t);
-  const [tab, setTab] = useState<Tab>(gmail && owner ? "email" : tabs[0].id);
+  const [tab, setTab] = useState<Tab>(gmail && owner && EMAIL_SENDING_LIVE ? "email" : tabs[0].id);
 
   // Coming back from Google: show the result once, then tidy the address bar.
   useEffect(() => {
