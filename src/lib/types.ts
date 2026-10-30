@@ -214,6 +214,16 @@ export interface Payment {
   receivedAt: string;
 }
 
+export interface InvoiceEmail {
+  id: string;
+  workshopId: string;
+  invoiceId: string;
+  toEmail: string;
+  fromEmail: string;
+  sentBy: string | null;
+  sentAt: string;
+}
+
 export interface AuditEntry {
   id: string;
   workshopId: string;
@@ -242,4 +252,5 @@ export interface Data {
   invoices: Invoice[];
   payments: Payment[];
   audit: AuditEntry[];
+  invoiceEmails: InvoiceEmail[];
 }

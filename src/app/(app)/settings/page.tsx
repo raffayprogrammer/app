@@ -1,7 +1,9 @@
 "use client";
 
-import { Pencil, Plug, PlugZap, Plus, Printer, Trash2 } from "lucide-react";
-import { useState, useSyncExternalStore } from "react";
+import { Mail, Pencil, Plug, PlugZap, Plus, Printer, Trash2 } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState, useSyncExternalStore } from "react";
+import { disconnectGmail, getEmailConnection } from "@/app/actions/email";
 import { createStaffAccount } from "@/app/actions/team";
 import { attempt, toast } from "@/components/toast";
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, PageHeader, Select, Tabs, tableCls, tdCls, thCls } from "@/components/ui";
@@ -19,21 +21,50 @@ import type { CannedJob, LineKind, PrinterSettings, Role, User } from "@/lib/typ
 
 const noSubscribe = () => () => {};
 
-type Tab = "workshop" | "billing" | "team" | "canned" | "printer" | "activity" | "demo";
+type Tab = "workshop" | "billing" | "team" | "canned" | "email" | "printer" | "activity";
+
+const GMAIL_RESULT: Record<string, [string, "success" | "error"]> = {
+  connected: ["Gmail connected. You can now email invoices.", "success"],
+  cancelled: ["Gmail connection was cancelled.", "error"],
+  expired: ["The Google sign-in took too long. Please try again.", "error"],
+  forbidden: ["Only the workshop owner can connect Gmail.", "error"],
+  noscope: ["Please tick the permission to send email when Google asks.", "error"],
+  error: ["Couldn't connect Gmail. Please try again.", "error"],
+};
 
 export default function SettingsPage() {
+  return (
+    <Suspense>
+      <Settings />
+    </Suspense>
+  );
+}
+
+function Settings() {
   const { user } = useAuthed();
+  const params = useSearchParams();
+  const router = useRouter();
+  const gmail = params.get("gmail");
   const owner = can(user.role, "settings");
   const all: (false | { id: Tab; label: string })[] = [
     owner && { id: "workshop", label: "Workshop" },
     owner && { id: "billing", label: "Billing & tax" },
     can(user.role, "users") && { id: "team", label: "Team" },
     owner && { id: "canned", label: "Canned jobs" },
+    owner && { id: "email", label: "Email" },
     { id: "printer", label: "Printer" },
     can(user.role, "audit") && { id: "activity", label: "Activity log" },
   ];
   const tabs = all.filter((t): t is { id: Tab; label: string } => !!t);
-  const [tab, setTab] = useState<Tab>(tabs[0].id);
+  const [tab, setTab] = useState<Tab>(gmail && owner ? "email" : tabs[0].id);
+
+  // Coming back from Google: show the result once, then tidy the address bar.
+  useEffect(() => {
+    if (!gmail) return;
+    const [msg, kind] = GMAIL_RESULT[gmail] ?? GMAIL_RESULT.error;
+    toast(msg, kind);
+    router.replace("/settings");
+  }, [gmail, router]);
   return (
     <>
       <PageHeader title="Settings" />
@@ -42,6 +73,7 @@ export default function SettingsPage() {
       {tab === "billing" && <BillingTab />}
       {tab === "team" && <TeamTab />}
       {tab === "canned" && <CannedTab />}
+      {tab === "email" && <EmailTab />}
       {tab === "printer" && <PrinterTab />}
       {tab === "activity" && <ActivityTab />}
     </>
@@ -282,6 +314,53 @@ function CannedModal({ job, onClose }: { job?: CannedJob; onClose: () => void })
         </div>
       </form>
     </Modal>
+  );
+}
+
+function EmailTab() {
+  const [conn, setConn] = useState<{ email: string; connectedAt: string } | null | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    getEmailConnection().then((c) => live && setConn(c));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const disconnect = async () => {
+    setBusy(true);
+    const { error } = await disconnectGmail();
+    setBusy(false);
+    if (error) return toast(error, "error");
+    setConn(null);
+    toast("Gmail disconnected");
+  };
+
+  return (
+    <Card title="Email invoices with Gmail" className="max-w-2xl" actions={conn ? <Badge tone="green">Connected</Badge> : conn === null ? <Badge>Not connected</Badge> : null}>
+      {conn === undefined ? (
+        <p className="text-sm text-slate-400">Checking…</p>
+      ) : conn ? (
+        <div className="space-y-4 text-sm">
+          <p className="flex items-center gap-2 text-slate-700">
+            <Mail className="h-4 w-4 text-slate-400" /> Invoices are sent from <b>{conn.email}</b>
+          </p>
+          <p className="text-xs text-slate-500">Connected {formatDateTime(conn.connectedAt)}. Customers can reply straight to this address.</p>
+          <div className="flex gap-2">
+            <a href="/api/google/connect"><Button variant="secondary">Switch account</Button></a>
+            <Button variant="ghost" onClick={disconnect} disabled={busy}>Disconnect</Button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-4 text-sm text-slate-600">
+          <p>Connect the workshop&apos;s Gmail once. After that, every invoice has an <b>Email</b> button that sends it to the customer from your own address.</p>
+          <p className="text-xs text-slate-500">WorkshopPOS only gets permission to <b>send</b> email. It can&apos;t read your inbox.</p>
+          <a href="/api/google/connect"><Button><Mail className="h-4 w-4" /> Connect Gmail</Button></a>
+        </div>
+      )}
+    </Card>
   );
 }
 

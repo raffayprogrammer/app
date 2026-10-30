@@ -428,7 +428,7 @@ export const useStore = create<State>()((set, get) => {
 
 // ---- Read hooks ------------------------------------------------------------------
 
-type ScopedKey = "customers" | "vehicles" | "parts" | "movements" | "cannedJobs" | "ros" | "invoices" | "payments" | "audit" | "users";
+type ScopedKey = "customers" | "vehicles" | "parts" | "movements" | "cannedJobs" | "ros" | "invoices" | "payments" | "audit" | "users" | "invoiceEmails";
 
 /** Records of one type that belong to the signed-in workshop. */
 export function useScoped<K extends ScopedKey>(key: K): State[K] {

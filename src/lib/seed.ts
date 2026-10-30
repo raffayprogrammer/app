@@ -230,5 +230,5 @@ export function buildDemoData(): Data {
     { id: uid(), workshopId: ws.id, userId: owner.id, action: "workshop.created", entity: "workshop", entityId: ws.id, summary: "Demo workshop created", at: ago(60) },
   ];
 
-  return { workshops: [ws], users, customers, vehicles, parts, movements, cannedJobs, ros, invoices, payments, audit };
+  return { workshops: [ws], users, customers, vehicles, parts, movements, cannedJobs, ros, invoices, payments, audit, invoiceEmails: [] };
 }
