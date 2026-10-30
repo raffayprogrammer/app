@@ -9,7 +9,5 @@ export const DEMO_PASSWORD = "demo123";
 export const DEMO_ACCOUNTS: { name: string; email: string; role: Role }[] = [
   { name: "Usman Tariq", email: "owner@demo.pk", role: "owner" },
   { name: "Hamza Ali", email: "advisor@demo.pk", role: "advisor" },
-  { name: "Imran Khan", email: "tech@demo.pk", role: "technician" },
-  { name: "Bilal Ahmed", email: "tech2@demo.pk", role: "technician" },
   { name: "Ayesha Noor", email: "cashier@demo.pk", role: "cashier" },
 ];

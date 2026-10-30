@@ -176,7 +176,7 @@ function TeamTab() {
         </table>
       </div>
       <div className="border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
-        <b>Owner</b>: everything · <b>Service Advisor</b>: job cards, customers, invoices · <b>Cashier / Storekeeper</b>: payments, invoices, stock · <b>Technician</b>: own jobs only.
+        <b>Owner</b>: everything · <b>Service Advisor</b>: job cards, customers, invoices · <b>Cashier / Storekeeper</b>: payments, invoices, stock.
         Staff are deactivated, never deleted, so their history stays.
       </div>
       {adding && <AddUserModal onClose={() => setAdding(false)} />}

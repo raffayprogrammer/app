@@ -9,7 +9,7 @@ import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import type { Role } from "@/lib/types";
 
-const ROLES: Role[] = ["owner", "advisor", "technician", "cashier"];
+const ROLES: Role[] = ["owner", "advisor", "cashier"];
 
 export async function createStaffAccount(input: { name: string; email: string; password: string; role: Role }): Promise<{ error?: string }> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;

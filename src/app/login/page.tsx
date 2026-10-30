@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { AuthLayout } from "@/components/auth-layout";
 import { attemptResult } from "@/components/toast";
 import { Badge, Button, Field, Input } from "@/components/ui";
-import { homeFor, ROLE_LABELS } from "@/lib/permissions";
+import { ROLE_LABELS } from "@/lib/permissions";
 import { DEMO_ACCOUNTS, DEMO_PASSWORD, DEMO_WORKSHOP } from "@/lib/demo";
 import { useSession, useStore } from "@/lib/store";
 
@@ -21,7 +21,7 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (user) router.replace(homeFor(user.role));
+    if (user) router.replace("/dashboard");
   }, [router, user]);
 
   const signIn = async (e: string, p: string) => {
@@ -69,7 +69,7 @@ export default function LoginPage() {
                 className="flex flex-col items-start rounded-lg border border-slate-200 px-3 py-2 text-left hover:border-orange-400 hover:bg-orange-50 disabled:opacity-50"
               >
                 <span className="text-sm font-medium text-slate-800">{u.name}</span>
-                <Badge tone={u.role === "owner" ? "orange" : u.role === "technician" ? "blue" : "slate"} className="mt-1">
+                <Badge tone={u.role === "owner" ? "orange" : "slate"} className="mt-1">
                   {ROLE_LABELS[u.role]}
                 </Badge>
               </button>

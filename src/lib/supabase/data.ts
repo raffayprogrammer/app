@@ -37,7 +37,7 @@ interface MovementRow {
 interface CannedRow { id: string; workshop_id: string; title: string; lines: CannedJob["lines"] }
 interface RoRow {
   id: string; workshop_id: string; number: number; customer_id: string; vehicle_id: string; status: RoStatus; label: WorkLabel;
-  technician_id: string | null; concern: string; notes: string; odometer_in: number | null; promised_at: string | null;
+  concern: string; notes: string; odometer_in: number | null; promised_at: string | null;
   discount: Num; stock_deducted: boolean; invoice_id: string | null; created_by: string; created_at: string;
   updated_at: string; completed_at: string | null;
 }
@@ -178,7 +178,7 @@ export async function loadWorkshopData(sb: SupabaseClient): Promise<Data> {
     cannedJobs: canned.map((c): CannedJob => ({ id: c.id, workshopId: c.workshop_id, title: c.title, lines: c.lines ?? [] })),
     ros: ros.map((r): RepairOrder => ({
       id: r.id, workshopId: r.workshop_id, number: r.number, customerId: r.customer_id, vehicleId: r.vehicle_id, status: r.status,
-      label: r.label, technicianId: r.technician_id, concern: r.concern, notes: r.notes, odometerIn: nOrNull(r.odometer_in),
+      label: r.label, concern: r.concern, notes: r.notes, odometerIn: nOrNull(r.odometer_in),
       promisedAt: r.promised_at, jobs: jobsByRo.get(r.id) ?? [], discount: n(r.discount), stockDeducted: r.stock_deducted,
       invoiceId: r.invoice_id, createdBy: r.created_by, createdAt: r.created_at, updatedAt: r.updated_at, completedAt: r.completed_at,
     })),

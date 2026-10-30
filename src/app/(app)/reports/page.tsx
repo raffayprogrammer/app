@@ -27,7 +27,6 @@ export default function ReportsPage() {
   const invoices = useScoped("invoices");
   const payments = useScoped("payments");
   const ros = useScoped("ros");
-  const users = useScoped("users");
   const look = useLookups();
   const today = day(new Date());
   const [from, setFrom] = useState(today);
@@ -45,13 +44,10 @@ export default function ReportsPage() {
     for (const p of pays) byMethod.set(p.method, (byMethod.get(p.method) ?? 0) + p.amount);
 
     const finished = ros.filter((x) => x.completedAt && inRange(x.completedAt));
-    const techs = users.filter((u) => u.role === "technician").map((u) => {
-      const mine = finished.filter((x) => x.technicianId === u.id);
-      let hours = 0;
-      let labour = 0;
-      for (const x of mine) for (const j of approvedJobs(x)) for (const l of j.lines) if (l.kind === "labor") { hours += l.qty; labour += lineAmount(l); }
-      return { u, cars: mine.length, hours, labour };
-    });
+    let hours = 0;
+    let labour = 0;
+    for (const x of finished) for (const j of approvedJobs(x)) for (const l of j.lines) if (l.kind === "labor") { hours += l.qty; labour += lineAmount(l); }
+    const work = { cars: finished.length, jobs: finished.reduce((s, x) => s + approvedJobs(x).length, 0), hours, labour };
 
     const partsSold = new Map<string, { name: string; qty: number; amount: number }>();
     for (const i of invs) for (const l of i.lines) if (l.kind === "part") {
@@ -61,12 +57,12 @@ export default function ReportsPage() {
     }
 
     return {
-      invs, pays, byMethod, techs,
+      invs, pays, byMethod, work,
       topParts: [...partsSold.values()].sort((x, y) => y.amount - x.amount).slice(0, 10),
       parts: sum("parts"), labor: sum("labor"), fees: sum("fees"), discount: sum("discount"), tax: sum("tax"), total: sum("total"),
       collected: pays.reduce((s, p) => s + p.amount, 0),
     };
-  }, [from, to, invoices, payments, ros, users]);
+  }, [from, to, invoices, payments, ros]);
 
   const exportCsv = () =>
     downloadCsv(`sales-${from}-to-${to}.csv`, [
@@ -80,7 +76,7 @@ export default function ReportsPage() {
 
   return (
     <>
-      <PageHeader title="Reports" subtitle="Sales, collections and technician productivity." actions={<Button variant="secondary" onClick={exportCsv}><Download className="h-4 w-4" /> Export sales</Button>} />
+      <PageHeader title="Reports" subtitle="Sales, collections and work done." actions={<Button variant="secondary" onClick={exportCsv}><Download className="h-4 w-4" /> Export sales</Button>} />
 
       <Card className="mb-6">
         <div className="flex flex-wrap items-end gap-3">
@@ -115,13 +111,13 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        <Card title="Technician productivity" bodyClassName="p-0">
+        <Card title="Work done" bodyClassName="p-0">
           <table className={tableCls}>
-            <thead><tr><th className={thCls}>Technician</th><th className={`${thCls} text-right`}>Cars finished</th><th className={`${thCls} text-right`}>Hours billed</th><th className={`${thCls} text-right`}>Labour sold</th></tr></thead>
             <tbody>
-              {r.techs.map(({ u, cars, hours, labour }) => (
-                <tr key={u.id}><td className={tdCls}>{u.name}</td><td className={`${tdCls} text-right`}>{cars}</td><td className={`${tdCls} text-right`}>{hours}</td><td className={`${tdCls} text-right font-medium`}>{formatMoney(labour)}</td></tr>
-              ))}
+              <tr><td className={tdCls}>Cars finished</td><td className={`${tdCls} text-right`}>{r.work.cars}</td></tr>
+              <tr><td className={tdCls}>Jobs done</td><td className={`${tdCls} text-right`}>{r.work.jobs}</td></tr>
+              <tr><td className={tdCls}>Labour hours billed</td><td className={`${tdCls} text-right`}>{r.work.hours}</td></tr>
+              <tr className="bg-slate-50 font-semibold"><td className={tdCls}>Labour sold</td><td className={`${tdCls} text-right`}>{formatMoney(r.work.labour)}</td></tr>
             </tbody>
           </table>
         </Card>

@@ -47,7 +47,7 @@ export function buildDemoData(): Data {
     id: uid(), workshopId: ws.id, name, email, role, active: true, createdAt: ago(60),
   });
   const users = DEMO_ACCOUNTS.map((a) => mkUser(a.name, a.email, a.role));
-  const [owner, advisor, tech1, tech2, cashier] = users;
+  const [owner, advisor, cashier] = users;
 
   // ---- Parts -------------------------------------------------------------
   const partList: [string, string, string, string, string, string, number, number, number][] = [
@@ -128,18 +128,18 @@ export function buildDemoData(): Data {
   const job = (title: string, approval: Job["approval"], lines: Line[], done = false): Job => ({ id: uid(), title, approval, lines, done });
   let roSeq = 1001;
   const mkRo = (r: Partial<RepairOrder> & Pick<RepairOrder, "customerId" | "vehicleId" | "status" | "jobs" | "concern" | "createdAt">): RepairOrder => ({
-    id: uid(), workshopId: ws.id, number: roSeq++, label: "none", technicianId: null, notes: "", odometerIn: null, promisedAt: null,
+    id: uid(), workshopId: ws.id, number: roSeq++, label: "none", notes: "", odometerIn: null, promisedAt: null,
     discount: 0, stockDeducted: false, invoiceId: null, createdBy: advisor.id, updatedAt: r.createdAt, completedAt: null, ...r,
   });
 
   const ro1 = mkRo({
     customerId: ali.customer.id, vehicleId: ali.vehicles[0].id, status: "closed", concern: "Routine oil change",
-    odometerIn: 84200, technicianId: tech1.id, createdAt: ago(1, 5), completedAt: ago(1, 3), stockDeducted: true,
+    odometerIn: 84200, createdAt: ago(1, 5), completedAt: ago(1, 3), stockDeducted: true,
     jobs: [job("Oil change – Corolla", "approved", [labor("Drain and refill engine oil, replace filter", 0.5), part("oil", 1), part("ofCorolla", 1)], true)],
   });
   const ro2 = mkRo({
     customerId: bilalMotors.customer.id, vehicleId: bilalMotors.vehicles[0].id, status: "invoiced", concern: "Periodic service, brakes feel soft",
-    odometerIn: 156000, technicianId: tech2.id, createdAt: ago(3), completedAt: ago(2, 20), stockDeducted: true,
+    odometerIn: 156000, createdAt: ago(3), completedAt: ago(2, 20), stockDeducted: true,
     jobs: [
       job("Periodic service", "approved", [labor("Full periodic service", 2), part("oil", 2), part("coolant", 2)], true),
       job("Brake fluid flush", "approved", [labor("Flush and bleed brake system", 1), part("brakeFluid", 2)], true),
@@ -147,7 +147,7 @@ export function buildDemoData(): Data {
   });
   const ro3 = mkRo({
     customerId: usama.customer.id, vehicleId: usama.vehicles[0].id, status: "completed", concern: "Squeaking from front wheels when braking",
-    odometerIn: 67100, technicianId: tech1.id, createdAt: ago(0, 6), completedAt: ago(0, 1), stockDeducted: true, label: "ready",
+    odometerIn: 67100, createdAt: ago(0, 6), completedAt: ago(0, 1), stockDeducted: true, label: "ready",
     jobs: [
       job("Front brake pads – City", "approved", [labor("Replace front brake pads, clean callipers", 1.5), part("padsCivic", 1)], true),
       job("Wiper blades", "declined", [part("wiper", 2)]),
@@ -155,7 +155,7 @@ export function buildDemoData(): Data {
   });
   const ro4 = mkRo({
     customerId: sara.customer.id, vehicleId: sara.vehicles[0].id, status: "in_progress", label: "waiting_parts",
-    concern: "Knocking noise over bumps, AC weak", odometerIn: 41300, technicianId: tech1.id, createdAt: ago(0, 4), promisedAt: ahead(5),
+    concern: "Knocking noise over bumps, AC weak", odometerIn: 41300, createdAt: ago(0, 4), promisedAt: ahead(5),
     jobs: [
       job("Front suspension check & shock replacement", "approved", [labor("Replace front shock absorbers (pair)", 3), fee("Shock absorbers (sourced from market)", 31000)]),
       job("AC service", "approved", [labor("AC inspection and service", 1.5), part("cabin", 1), fee("AC gas top-up (R134a)", 3500)], true),
@@ -164,7 +164,7 @@ export function buildDemoData(): Data {
   });
   const ro5 = mkRo({
     customerId: farhan.customer.id, vehicleId: farhan.vehicles[0].id, status: "in_progress", label: "in_bay",
-    concern: "Car misfiring, poor fuel average", odometerIn: 98500, technicianId: tech2.id, createdAt: ago(0, 3), promisedAt: ahead(2),
+    concern: "Car misfiring, poor fuel average", odometerIn: 98500, createdAt: ago(0, 3), promisedAt: ahead(2),
     jobs: [job("Engine tuning (4 cyl)", "approved", [labor("Engine tuning, throttle body clean", 2), part("plug", 4)])],
   });
   const ro6 = mkRo({
@@ -192,7 +192,7 @@ export function buildDemoData(): Data {
       p.qtyOnHand -= qty;
       movements.push({
         id: uid(), workshopId: ws.id, partId, qty: -qty, reason: "used_on_job", roId: ro.id, note: `Used on RO-${ro.number}`,
-        userId: ro.technicianId ?? owner.id, createdAt: ro.completedAt ?? ro.createdAt,
+        userId: advisor.id, createdAt: ro.completedAt ?? ro.createdAt,
       });
     }
   }

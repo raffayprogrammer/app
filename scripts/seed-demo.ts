@@ -17,7 +17,8 @@ if (!url || !secret) throw new Error("Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_
 
 const admin = createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false } });
 const reset = process.argv.includes("--reset");
-const demoEmails = new Set(DEMO_ACCOUNTS.map((a) => a.email));
+// Technician logins were dropped from the demo; still remove them on --reset.
+const demoEmails = new Set([...DEMO_ACCOUNTS.map((a) => a.email), "tech@demo.pk", "tech2@demo.pk"]);
 
 async function run<T>(label: string, call: PromiseLike<{ data: T; error: { message: string } | null }>): Promise<T> {
   const { data, error } = await call;
@@ -95,7 +96,7 @@ async function main() {
   await run("canned jobs", admin.from("canned_jobs").insert(d.cannedJobs.map((c) => ({ id: c.id, workshop_id: ws.id, title: c.title, lines: c.lines }))));
   await run("repair orders", admin.from("repair_orders").insert(d.ros.map((r) => ({
     id: r.id, workshop_id: ws.id, number: r.number, customer_id: r.customerId, vehicle_id: r.vehicleId, status: r.status, label: r.label,
-    technician_id: uid(r.technicianId), concern: r.concern, notes: r.notes, odometer_in: r.odometerIn, promised_at: r.promisedAt,
+    concern: r.concern, notes: r.notes, odometer_in: r.odometerIn, promised_at: r.promisedAt,
     discount: r.discount, stock_deducted: r.stockDeducted, invoice_id: null, created_by: uid(r.createdBy), created_at: r.createdAt,
     updated_at: r.updatedAt, completed_at: r.completedAt,
   }))));

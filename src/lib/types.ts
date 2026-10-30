@@ -4,7 +4,7 @@
 /** Money is always stored as integer paisa (1 rupee = 100 paisa) to avoid float errors. */
 export type Paisa = number;
 
-export type Role = "owner" | "advisor" | "technician" | "cashier";
+export type Role = "owner" | "advisor" | "cashier";
 
 export interface PrinterSettings {
   paper: "80mm" | "58mm" | "A4";
@@ -143,7 +143,6 @@ export interface RepairOrder {
   vehicleId: string;
   status: RoStatus;
   label: WorkLabel;
-  technicianId: string | null;
   concern: string;
   notes: string;
   odometerIn: number | null;

@@ -25,7 +25,6 @@ Sign in with one of the demo accounts on the login page (password `demo123`):
 | owner@demo.pk | Owner | Everything, including settings, team, activity log, voiding invoices |
 | advisor@demo.pk | Service Advisor | Job Board, job cards, customers, invoices, payments |
 | cashier@demo.pk | Cashier / Storekeeper | Invoices, payments, stock, reports |
-| tech@demo.pk | Technician | Only "My Work": their own cars, no prices |
 
 Or click **Create an account** to set up a brand-new workshop.
 
@@ -34,7 +33,7 @@ Or click **Create an account** to set up a brand-new workshop.
 1. **New job card** → search a plate or customer → pick the car → enter the complaint and odometer.
 2. Add jobs: type one, or pick a **canned job** (e.g. *Oil change – Corolla* adds labour + oil + filter in one click). Add labour, parts (from stock) or fees / outside work.
 3. **Print estimate**, then mark each job **Approved** or **Declined**. The first approval moves the card to *Work in progress* on the Job Board.
-4. The technician ticks jobs off in **My Work** and sets labels such as *Waiting on parts*.
+4. Tick jobs off on the job card as they are done and set labels such as *Waiting on parts*.
 5. **Complete work** → approved parts come out of stock automatically.
 6. **Create invoice** → numbered in sequence (`INV-000003`), totals frozen.
 7. **Take payment** → cash (with change), card, bank, JazzCash, Easypaisa; partial and split payments supported. Fully paid closes the job card.
@@ -45,13 +44,13 @@ Or click **Create an account** to set up a brand-new workshop.
 - Workshop sign-up, logins, 4 roles with permissions enforced in the data layer (not just hidden buttons)
 - Customers (individual / company with NTN) and vehicles, plate search from anywhere
 - Parts inventory: on hand / reserved / available, low-stock alerts, stock adjustments with reasons, movement history
-- Job cards: jobs made of labour + parts + fees, per-job approval, status workflow, technician assignment, promised time, discount (permission-controlled)
-- Job Board (Kanban) grouped by status or technician
+- Job cards: jobs made of labour + parts + fees, per-job approval, status workflow, promised time, discount (permission-controlled)
+- Job Board (Kanban) grouped by status
 - Invoices: sequential numbering that never reuses a number, void (owner only, unpaid only) instead of delete
 - Payments: 6 methods, partial and split, cash change calculator
 - Tax: parts and services taxed separately (federal sales tax on parts, services tax ready for provincial rates)
 - Printing: A4 invoice / estimate, thermal receipt via browser, and direct ESC/POS printing over Web Serial (Chrome / Edge)
-- Dashboard, reports (sales, collections by method, technician productivity, top parts), CSV export
+- Dashboard, reports (sales, collections by method, work done, top parts), CSV export
 - Activity log of every change
 - Declined work kept per customer to offer again next visit
 
@@ -61,7 +60,7 @@ Or click **Create an account** to set up a brand-new workshop.
 src/
   app/
     (app)/            signed-in screens (dashboard, board, repair-orders, customers, vehicles,
-                      inventory, invoices, reports, settings, my-work)
+                      inventory, invoices, reports, settings)
     login/ signup/    auth screens
     print/            printable invoice / estimate pages (no app chrome)
   components/         UI kit, app shell, forms, invoice document, thermal receipt
@@ -81,7 +80,7 @@ scripts/seed-demo.ts  creates the demo workshop in Supabase
 
 `supabase/migrations/0001_init.sql`:
 
-- Every table has `workshop_id`; row-level security limits each user to their own workshop. Technicians can't read invoices or payments, and only see job cards assigned to them.
+- Every table has `workshop_id`; row-level security limits each user to their own workshop.
 - Money is integer paisa; invoices, payments, stock movements and the activity log can't be deleted.
 - Workflow steps are SQL functions that run in one transaction: `create_workshop`, `open_repair_order`, `set_job_approval`, `set_job_done`, `set_ro_label`, `complete_repair_order`, `reopen_repair_order`, `cancel_repair_order`, `issue_invoice` (computes totals server-side, gap-free numbering), `record_payment`, `void_invoice`, `adjust_stock`.
 - Guard triggers stop direct edits to statuses, numbers and stock, and stop changes to closed job cards.
@@ -94,6 +93,6 @@ Push to GitHub and import the repo in Vercel. Add the variables from `.env.examp
 
 ## Coming next
 
-- **Phase 2:** technician tablet inspections with photos, WhatsApp estimate approval links, service reminders, technician job clock
+- **Phase 2:** vehicle inspections with photos, WhatsApp estimate approval links, service reminders
 - **Phase 3:** suppliers & purchase orders, credit/fleet accounts, credit notes, appointments calendar, owner KPIs
 - **Phase 4:** FBR POS integration, online payments, accounting sync, provincial tax rules, multi-branch

@@ -67,8 +67,8 @@ interface Actions {
   saveCannedJob: (input: Omit<CannedJob, "id" | "workshopId">, id?: string) => Promise<void>;
   deleteCannedJob: (id: string) => Promise<void>;
 
-  createRo: (input: { customerId: string; vehicleId: string; concern: string; odometerIn: number | null; promisedAt: string | null; technicianId: string | null }) => Promise<string>;
-  updateRo: (id: string, patch: Partial<Pick<RepairOrder, "concern" | "notes" | "odometerIn" | "promisedAt" | "technicianId" | "label" | "discount">>) => Promise<void>;
+  createRo: (input: { customerId: string; vehicleId: string; concern: string; odometerIn: number | null; promisedAt: string | null }) => Promise<string>;
+  updateRo: (id: string, patch: Partial<Pick<RepairOrder, "concern" | "notes" | "odometerIn" | "promisedAt" | "label" | "discount">>) => Promise<void>;
   addJob: (roId: string, title: string) => Promise<void>;
   addCannedJobToRo: (roId: string, cannedId: string) => Promise<void>;
   updateJob: (roId: string, jobId: string, patch: Partial<Pick<Job, "title" | "done">>) => Promise<void>;
@@ -300,7 +300,7 @@ export const useStore = create<State>()((set, get) => {
       if (open) fail(`This vehicle already has an open job card (RO-${open.number}).`);
       const id = await db(sb().rpc("open_repair_order", {
         p_customer: input.customerId, p_vehicle: input.vehicleId, p_concern: input.concern, p_odometer: input.odometerIn,
-        p_promised_at: input.promisedAt, p_technician: input.technicianId,
+        p_promised_at: input.promisedAt, p_technician: null,
       }));
       return id as string;
     }),
@@ -308,7 +308,7 @@ export const useStore = create<State>()((set, get) => {
       const { user } = ctx();
       const { label, ...rest } = patch;
       if (label !== undefined) {
-        if (!can(user.role, "my_work") && !can(user.role, "repair_orders")) fail("You don't have permission to do that.");
+        if (!can(user.role, "repair_orders")) fail("You don't have permission to do that.");
         await db(sb().rpc("set_ro_label", { p_ro: id, p_label: label }));
       }
       if (Object.keys(rest).length === 0) return;
@@ -319,7 +319,7 @@ export const useStore = create<State>()((set, get) => {
         editableRo(id);
       }
       const map: Record<string, string> = {
-        concern: "concern", notes: "notes", odometerIn: "odometer_in", promisedAt: "promised_at", technicianId: "technician_id", discount: "discount",
+        concern: "concern", notes: "notes", odometerIn: "odometer_in", promisedAt: "promised_at", discount: "discount",
       };
       const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
       for (const [k, v] of Object.entries(rest)) row[map[k]] = v;

@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState } from "react";
 import { CustomerModal, VehicleModal } from "@/components/forms";
 import { attemptResult } from "@/components/toast";
-import { Button, Card, Field, Input, PageHeader, Select, Textarea } from "@/components/ui";
+import { Button, Card, Field, Input, PageHeader, Textarea } from "@/components/ui";
 import { cn, plateKey, roNumber } from "@/lib/format";
 import { useScoped, useStore } from "@/lib/store";
 
@@ -22,7 +22,6 @@ function NewRepairOrder() {
   const params = useSearchParams();
   const customers = useScoped("customers");
   const vehicles = useScoped("vehicles");
-  const users = useScoped("users");
   const ros = useScoped("ros");
   const createRo = useStore((s) => s.createRo);
 
@@ -32,14 +31,12 @@ function NewRepairOrder() {
   const [concern, setConcern] = useState("");
   const [odometer, setOdometer] = useState("");
   const [promisedAt, setPromisedAt] = useState("");
-  const [technicianId, setTechnicianId] = useState("");
   const [modal, setModal] = useState<"customer" | "vehicle" | null>(null);
   const [busy, setBusy] = useState(false);
 
   const customer = customers.find((c) => c.id === customerId);
   const custVehicles = vehicles.filter((v) => v.customerId === customerId);
   const vehicle = vehicles.find((v) => v.id === vehicleId);
-  const technicians = users.filter((u) => u.role === "technician" && u.active);
 
   const results = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -66,7 +63,7 @@ function NewRepairOrder() {
     setBusy(true);
     const id = await attemptResult(
       () => createRo({
-        customerId, vehicleId, concern, technicianId: technicianId || null,
+        customerId, vehicleId, concern,
         odometerIn: odometer ? Number(odometer) : vehicle?.odometer ?? null,
         promisedAt: promisedAt ? new Date(promisedAt).toISOString() : null,
       }),
@@ -165,12 +162,6 @@ function NewRepairOrder() {
                 <Input type="datetime-local" value={promisedAt} onChange={(e) => setPromisedAt(e.target.value)} />
               </Field>
             </div>
-            <Field label="Technician">
-              <Select value={technicianId} onChange={(e) => setTechnicianId(e.target.value)}>
-                <option value="">Assign later</option>
-                {technicians.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </Select>
-            </Field>
             <Button type="submit" className="w-full" disabled={!customerId || !vehicleId || !!openRo || busy}>{busy ? "Opening…" : "Open job card"}</Button>
           </div>
         </Card>

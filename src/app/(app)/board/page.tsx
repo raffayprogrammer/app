@@ -13,7 +13,6 @@ import { useAuthed, useScoped } from "@/lib/store";
 import type { RepairOrder } from "@/lib/types";
 
 type View = "active" | "closed" | "cancelled";
-type GroupBy = "status" | "technician";
 
 const COLUMNS: { id: string; title: string; match: (r: RepairOrder) => boolean; accent: string }[] = [
   { id: "estimate", title: "Estimates", match: (r) => r.status === "estimate", accent: "bg-violet-500" },
@@ -24,15 +23,10 @@ const COLUMNS: { id: string; title: string; match: (r: RepairOrder) => boolean; 
 export default function BoardPage() {
   const { workshop } = useAuthed();
   const ros = useScoped("ros");
-  const users = useScoped("users");
   const invoices = useScoped("invoices");
   const look = useLookups();
   const [view, setView] = useState<View>("active");
-  const [groupBy, setGroupBy] = useState<GroupBy>("status");
-  const [tech, setTech] = useState("all");
   const [q, setQ] = useState("");
-
-  const technicians = users.filter((u) => u.role === "technician" && u.active);
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -42,7 +36,6 @@ export default function BoardPage() {
         if (view === "closed") return r.status === "closed";
         return r.status === "cancelled";
       })
-      .filter((r) => tech === "all" || (tech === "none" ? !r.technicianId : r.technicianId === tech))
       .filter((r) => {
         if (!term) return true;
         const v = look.vehicle(r.vehicleId);
@@ -50,15 +43,9 @@ export default function BoardPage() {
         return [roNumber(r.number), v?.plate, v?.make, v?.model, c?.name, c?.phone].some((x) => x?.toLowerCase().includes(term));
       })
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  }, [ros, view, tech, q, look]);
+  }, [ros, view, q, look]);
 
-  const columns =
-    groupBy === "status"
-      ? COLUMNS.map((c) => ({ ...c, items: filtered.filter(c.match) }))
-      : [
-          ...technicians.map((t) => ({ id: t.id, title: t.name, accent: "bg-blue-500", items: filtered.filter((r) => r.technicianId === t.id) })),
-          { id: "none", title: "Unassigned", accent: "bg-slate-400", items: filtered.filter((r) => !r.technicianId) },
-        ];
+  const columns = COLUMNS.map((c) => ({ ...c, items: filtered.filter(c.match) }));
 
   return (
     <>
@@ -69,17 +56,6 @@ export default function BoardPage() {
           <option value="active">Active</option>
           <option value="closed">Paid & closed</option>
           <option value="cancelled">Cancelled</option>
-        </Select>
-        {view === "active" && (
-          <Select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)} className="w-auto">
-            <option value="status">Group by status</option>
-            <option value="technician">Group by technician</option>
-          </Select>
-        )}
-        <Select value={tech} onChange={(e) => setTech(e.target.value)} className="w-auto">
-          <option value="all">All technicians</option>
-          {technicians.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          <option value="none">Unassigned</option>
         </Select>
         <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter by plate, name, RO…" className="w-full sm:w-64" />
       </div>
@@ -98,7 +74,6 @@ export default function BoardPage() {
                 {col.items.map((r) => {
                   const v = look.vehicle(r.vehicleId);
                   const c = look.customer(r.customerId);
-                  const t = look.user(r.technicianId);
                   const approved = approvedJobs(r);
                   const done = approved.filter((j) => j.done).length;
                   const pending = r.jobs.filter((j) => j.approval === "pending").length;
@@ -120,7 +95,6 @@ export default function BoardPage() {
                           {r.status === "in_progress" && (r.label !== "none" ? <WorkLabelBadge label={r.label} /> : <Badge tone="blue">In progress</Badge>)}
                           {r.status === "completed" && <Badge tone="amber">Ready to invoice</Badge>}
                           {r.status === "invoiced" && <Badge tone={inv?.status === "partial" ? "amber" : "red"}>{inv?.status === "partial" ? "Part paid" : "Awaiting payment"}</Badge>}
-                          {groupBy === "technician" && <RoStatusBadge status={r.status} />}
                         </div>
                         <span className="text-xs font-medium text-slate-400">{roNumber(r.number)}</span>
                       </div>
@@ -136,20 +110,13 @@ export default function BoardPage() {
                         </div>
                       )}
                       <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-2 text-xs">
-                        <span className="flex items-center gap-1.5 text-slate-500">
-                          {t ? (
-                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-800 text-[10px] font-semibold text-white" title={t.name}>
-                              {t.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
-                            </span>
-                          ) : (
-                            <span className="text-slate-400">Unassigned</span>
-                          )}
-                          {r.promisedAt && (
-                            <span className={cn("flex items-center gap-0.5", overdue && "font-medium text-red-600")}>
-                              <Clock className="h-3 w-3" /> {formatTime(r.promisedAt)}
-                            </span>
-                          )}
-                        </span>
+                        {r.promisedAt ? (
+                          <span className={cn("flex items-center gap-0.5 text-slate-500", overdue && "font-medium text-red-600")}>
+                            <Clock className="h-3 w-3" /> {formatTime(r.promisedAt)}
+                          </span>
+                        ) : (
+                          <span />
+                        )}
                         <span className="font-semibold text-slate-800">{formatMoney(roTotals(r, workshop).total)}</span>
                       </div>
                     </Link>

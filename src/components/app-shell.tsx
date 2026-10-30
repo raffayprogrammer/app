@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  BarChart3, Car, ClipboardList, FileText, HardHat, LayoutDashboard, LogOut, Menu, Package, Plus, Settings, Users, X,
+  BarChart3, Car, ClipboardList, FileText, LayoutDashboard, LogOut, Menu, Package, Plus, Settings, Users, X,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -16,7 +16,6 @@ import { Button, EmptyState } from "./ui";
 const NAV: { href: string; label: string; icon: typeof LayoutDashboard; perm: Permission }[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, perm: "dashboard" },
   { href: "/board", label: "Job Board", icon: ClipboardList, perm: "board" },
-  { href: "/my-work", label: "My Work", icon: HardHat, perm: "my_work" },
   { href: "/customers", label: "Customers", icon: Users, perm: "customers" },
   { href: "/vehicles", label: "Vehicles", icon: Car, perm: "vehicles" },
   { href: "/inventory", label: "Inventory", icon: Package, perm: "inventory" },

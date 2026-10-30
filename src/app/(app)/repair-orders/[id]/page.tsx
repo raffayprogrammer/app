@@ -25,7 +25,6 @@ export default function RepairOrderPage() {
   const ros = useScoped("ros");
   const ro = ros.find((r) => r.id === id);
   const look = useLookups();
-  const users = useScoped("users");
   const cannedJobs = useScoped("cannedJobs");
   const stock = useStock();
   const a = useStore.getState();
@@ -42,7 +41,6 @@ export default function RepairOrderPage() {
   const vehicle = look.vehicle(ro.vehicleId);
   const editable = ro.status === "estimate" || ro.status === "in_progress";
   const totals = roTotals(ro, workshop);
-  const technicians = users.filter((u) => u.role === "technician" && (u.active || u.id === ro.technicianId));
   const pending = ro.jobs.filter((j) => j.approval === "pending").length;
 
   const addJob = async (e: React.FormEvent) => {
@@ -130,7 +128,7 @@ export default function RepairOrderPage() {
             {vehicle?.vin && <p className="text-xs text-slate-400">VIN {vehicle.vin}</p>}
           </Card>
           <Card title="Check-in">
-            <DetailsForm ro={ro} technicians={technicians} editable={ro.status !== "closed" && ro.status !== "cancelled"} />
+            <DetailsForm ro={ro} editable={ro.status !== "closed" && ro.status !== "cancelled"} />
           </Card>
         </div>
 
@@ -195,17 +193,11 @@ export default function RepairOrderPage() {
   );
 }
 
-function DetailsForm({ ro, technicians, editable }: { ro: RepairOrder; technicians: { id: string; name: string }[]; editable: boolean }) {
+function DetailsForm({ ro, editable }: { ro: RepairOrder; editable: boolean }) {
   const updateRo = useStore((s) => s.updateRo);
   const [concern, setConcern] = useState(ro.concern);
   return (
     <div className="space-y-3 text-sm">
-      <Field label="Technician">
-        <Select value={ro.technicianId ?? ""} disabled={!editable} onChange={(e) => attempt(() => updateRo(ro.id, { technicianId: e.target.value || null }), "Technician assigned")}>
-          <option value="">Unassigned</option>
-          {technicians.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-        </Select>
-      </Field>
       <Field label="Promised ready by">
         <Input
           type="datetime-local"
